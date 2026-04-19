@@ -1,0 +1,14 @@
+* text=auto
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.tga binary
+*.psd binary
+*.fbx binary
+*.prefab text
+*.unity text
+*.mat text
+*.anim text
+*.asset text
+*.meta text
