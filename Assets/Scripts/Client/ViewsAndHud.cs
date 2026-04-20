@@ -17,10 +17,12 @@ namespace EggTest.Client
         private readonly List<BufferedSnapshot> _snapshotBuffer = new List<BufferedSnapshot>();
 
         private Transform _visualRoot;
+        private Transform _labelTransform;
         private Renderer _renderer;
         private TextMesh _label;
         private PlayerProfile _profile;
         private int _score;
+        private Camera _cachedMainCamera;
 
         public void Initialize(PlayerProfile profile)
         {
@@ -40,6 +42,7 @@ namespace EggTest.Client
             GameObject labelObject = new GameObject("Label");
             labelObject.transform.SetParent(transform, false);
             labelObject.transform.localPosition = new Vector3(0f, 1.35f, 0f);
+            _labelTransform = labelObject.transform;
             _label = labelObject.AddComponent<TextMesh>();
             _label.fontSize = 32;
             _label.characterSize = 0.1f;
@@ -48,6 +51,11 @@ namespace EggTest.Client
             _label.text = profile.DisplayName;
 
             SetScore(0);
+        }
+
+        private void LateUpdate()
+        {
+            UpdateLabelFacingCamera();
         }
 
         public void SetScore(int score)
@@ -145,6 +153,32 @@ namespace EggTest.Client
             }
 
             _visualRoot.forward = new Vector3(direction.x, 0f, direction.y);
+        }
+
+        private void UpdateLabelFacingCamera()
+        {
+            if (_labelTransform == null)
+            {
+                return;
+            }
+
+            if (_cachedMainCamera == null || !_cachedMainCamera.isActiveAndEnabled)
+            {
+                _cachedMainCamera = Camera.main;
+            }
+
+            if (_cachedMainCamera == null)
+            {
+                return;
+            }
+
+            Vector3 toLabel = _labelTransform.position - _cachedMainCamera.transform.position;
+            if (toLabel.sqrMagnitude < 0.0001f)
+            {
+                return;
+            }
+
+            _labelTransform.rotation = Quaternion.LookRotation(toLabel.normalized, _cachedMainCamera.transform.up);
         }
     }
 
