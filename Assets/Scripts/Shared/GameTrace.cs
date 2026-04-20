@@ -20,6 +20,11 @@ namespace EggTest.Shared
             VerboseEnabled = verboseEnabled;
         }
 
+        public static void ResetThrottleState()
+        {
+            LastLogTimes.Clear();
+        }
+
         public static void Log(string category, string message)
         {
             if (!Enabled)

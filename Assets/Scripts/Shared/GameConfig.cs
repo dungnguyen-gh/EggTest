@@ -41,6 +41,8 @@ namespace EggTest.Shared
         public float BotRetargetInterval = 0.50f;
         public float BotWaypointTolerance = 0.18f;
         public float BotRandomScoreNoise = 0.35f;
+        public int BotClearanceInflationRadiusCells = 1;
+        public bool BotUseCornerSafetyInflation = true;
 
         public int RandomSeed = 12345;
         public bool EnableDebugLogs = false;

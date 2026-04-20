@@ -1,8 +1,10 @@
 using System.Collections.Generic;
+using System.Linq;
 using EggTest.Server;
 using EggTest.Shared;
 using NUnit.Framework;
 using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace EggTest.Tests.EditMode
 {
@@ -53,6 +55,114 @@ namespace EggTest.Tests.EditMode
                     Assert.GreaterOrEqual(manhattanDistance, 3, "Egg cell should not be too close to a spawn cell.");
                 }
             }
+        }
+
+        [Test]
+        public void CreateDefault_BuildsClearanceBlockedCellsBeyondBaseBlockedCells()
+        {
+            GameConfig config = new GameConfig();
+            ArenaDefinition arena = ArenaDefinition.CreateDefault(config);
+
+            Assert.Greater(arena.ClearanceBlockedCells.Count, arena.BlockedCells.Count);
+
+            foreach (GridCell blocked in arena.BlockedCells)
+            {
+                Assert.IsTrue(arena.ClearanceBlockedCells.Contains(blocked));
+            }
+        }
+
+        [Test]
+        public void CreateDefault_BuildsBotSafeSpawnAndEggCaches_WhenClearanceIsEnabled()
+        {
+            GameConfig config = new GameConfig
+            {
+                PlayerCount = 4,
+                BotClearanceInflationRadiusCells = 1,
+                BotUseCornerSafetyInflation = true,
+            };
+
+            ArenaDefinition arena = ArenaDefinition.CreateDefault(config);
+
+            Assert.GreaterOrEqual(arena.BotSafeSpawnCells.Count, config.PlayerCount, "Bot-safe spawns should cover all runtime players.");
+            Assert.Greater(arena.BotSafeEggCells.Count, 0, "Bot-safe egg cells should exist for server spawning.");
+
+            for (int i = 0; i < arena.BotSafeSpawnCells.Count; i++)
+            {
+                GridCell spawnCell = arena.BotSafeSpawnCells[i];
+                Assert.IsTrue(arena.IsClearForBot(spawnCell), "Bot-safe spawn must be clear for bots.");
+                Assert.IsTrue(arena.PrimaryBotSafeRegionCells.Contains(spawnCell), "Bot-safe spawn should belong to the primary bot-safe region.");
+            }
+
+            for (int i = 0; i < arena.BotSafeEggCells.Count; i++)
+            {
+                GridCell eggCell = arena.BotSafeEggCells[i];
+                Assert.IsTrue(arena.IsClearForBot(eggCell), "Bot-safe egg must be clear for bots.");
+                Assert.IsTrue(arena.PrimaryBotSafeRegionCells.Contains(eggCell), "Bot-safe egg should belong to the primary bot-safe region.");
+
+                for (int j = 0; j < arena.BotSafeSpawnCells.Count; j++)
+                {
+                    GridCell spawn = arena.BotSafeSpawnCells[j];
+                    int manhattanDistance = Mathf.Abs(spawn.X - eggCell.X) + Mathf.Abs(spawn.Y - eggCell.Y);
+                    Assert.GreaterOrEqual(manhattanDistance, 3, "Bot-safe egg cell should stay away from bot-safe spawns.");
+                }
+            }
+        }
+
+        [Test]
+        public void CreateDefault_BotSafeEggsRemainReachableFromPrimaryBotSpawn()
+        {
+            GameConfig config = new GameConfig
+            {
+                PlayerCount = 4,
+                BotClearanceInflationRadiusCells = 1,
+                BotUseCornerSafetyInflation = true,
+            };
+
+            ArenaDefinition arena = ArenaDefinition.CreateDefault(config);
+            GridPathfinder safePathfinder = new GridPathfinder(arena, useBotClearance: true);
+            List<GridCell> path = new List<GridCell>();
+            GridCell start = arena.BotSafeSpawnCells[0];
+
+            for (int i = 0; i < arena.BotSafeEggCells.Count; i++)
+            {
+                bool found = safePathfinder.TryFindPath(start, arena.BotSafeEggCells[i], path);
+                Assert.IsTrue(found, "Primary bot-safe spawn should be able to reach every bot-safe egg.");
+            }
+        }
+
+        [Test]
+        public void CreateDefault_MaxSupportedPlayerCount_UsesPrimaryBotSafeCapacity()
+        {
+            GameConfig config = new GameConfig
+            {
+                PlayerCount = 4,
+            };
+
+            ArenaDefinition arena = ArenaDefinition.CreateDefault(config);
+
+            Assert.GreaterOrEqual(arena.MaxSupportedPlayerCount, config.PlayerCount);
+            Assert.AreEqual(arena.PrimaryBotSafeRegionCells.Count, arena.MaxSupportedPlayerCount);
+        }
+    }
+
+    public sealed class GameTraceTests
+    {
+        [Test]
+        public void ResetThrottleState_AllowsLogEveryToEmitAgainForSameKey()
+        {
+            GameTrace.Configure(true, false);
+            GameTrace.ResetThrottleState();
+
+            LogAssert.Expect(LogType.Log, "[EggTest][Test] First");
+            GameTrace.LogEvery("Test", "ThrottleKey", 999f, "First");
+
+            GameTrace.ResetThrottleState();
+
+            LogAssert.Expect(LogType.Log, "[EggTest][Test] Second");
+            GameTrace.LogEvery("Test", "ThrottleKey", 999f, "Second");
+
+            GameTrace.Configure(false, false);
+            GameTrace.ResetThrottleState();
         }
     }
 
@@ -111,6 +221,30 @@ namespace EggTest.Tests.EditMode
 
             Assert.IsFalse(found);
             Assert.AreEqual(0, path.Count);
+        }
+
+        [Test]
+        public void TryFindPath_BotSafeMode_RejectsTightCorridor()
+        {
+            ArenaDefinition arena = new ArenaDefinition(
+                5,
+                5,
+                1f,
+                new[]
+                {
+                    new GridCell(1, 1),
+                    new GridCell(1, 2),
+                    new GridCell(3, 2),
+                    new GridCell(3, 3),
+                },
+                new[] { new GridCell(0, 0) });
+
+            GridPathfinder safePathfinder = new GridPathfinder(arena, useBotClearance: true);
+            List<GridCell> path = new List<GridCell>();
+
+            bool found = safePathfinder.TryFindPath(new GridCell(0, 2), new GridCell(4, 2), path);
+
+            Assert.IsFalse(found);
         }
     }
 }

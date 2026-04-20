@@ -14,6 +14,8 @@ namespace EggTest.Server
     /// </summary>
     public sealed class GridPathfinder : IPathfinder
     {
+        private readonly bool _useBotClearance;
+
         private struct OpenNode
         {
             public GridCell Cell;
@@ -27,18 +29,24 @@ namespace EggTest.Server
         private readonly HashSet<GridCell> _closed = new HashSet<GridCell>();
         private readonly List<OpenNode> _openHeap = new List<OpenNode>(32);
 
-        public GridPathfinder(ArenaDefinition arena)
+        public GridPathfinder(ArenaDefinition arena, bool useBotClearance = false)
         {
             _arena = arena;
+            _useBotClearance = useBotClearance;
         }
 
         public bool TryFindPath(GridCell start, GridCell goal, List<GridCell> outputPath)
         {
             outputPath.Clear();
 
-            if (!_arena.IsWalkable(start) || !_arena.IsWalkable(goal))
+            if (!IsTraversable(start) || !IsTraversable(goal))
             {
-                GameTrace.Verbose("Pathfinding", "Rejected path from " + start + " to " + goal + " because one endpoint is blocked.");
+                GameTrace.Warn(
+                    "Pathfinding",
+                    "Rejected path from " + start + " to " + goal
+                    + " because one endpoint is blocked. startTraversable=" + IsTraversable(start)
+                    + " goalTraversable=" + IsTraversable(goal)
+                    + " useBotClearance=" + _useBotClearance + ".");
                 return false;
             }
 
@@ -74,7 +82,7 @@ namespace EggTest.Server
                 for (int i = 0; i < _neighbors.Count; i++)
                 {
                     GridCell neighbor = _neighbors[i];
-                    if (!_arena.IsWalkable(neighbor) || _closed.Contains(neighbor))
+                    if (!IsTraversable(neighbor) || _closed.Contains(neighbor))
                     {
                         continue;
                     }
@@ -118,6 +126,11 @@ namespace EggTest.Server
             }
 
             outputPath.Reverse();
+        }
+
+        private bool IsTraversable(GridCell cell)
+        {
+            return _useBotClearance ? _arena.IsClearForBot(cell) : _arena.IsWalkable(cell);
         }
 
         private void ResetSearchState()

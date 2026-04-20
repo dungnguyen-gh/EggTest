@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
 using EggTest.Shared;
 using UnityEngine;
 
@@ -59,15 +60,27 @@ namespace EggTest.Server
         private int _nextEggId;
         private int _snapshotSequence;
         private bool _isRunning;
+        private readonly bool _useBotSafeRuntimeSpawns;
+        private readonly bool _useBotSafeEggSpawns;
 
         public ServerSimulator(GameConfig config, ArenaDefinition arena, INetworkTransport transport)
         {
             _config = config;
             _arena = arena;
             _transport = transport;
-            _pathfinder = new GridPathfinder(arena);
+            _pathfinder = new GridPathfinder(arena, useBotClearance: true);
             _random = new System.Random(config.RandomSeed);
+            _useBotSafeRuntimeSpawns = arena.BotSafeSpawnCells.Count >= config.PlayerCount;
+            _useBotSafeEggSpawns = arena.BotSafeEggCells.Count > 0;
             GameTrace.Log("Server", "Server simulator created.");
+            GameTrace.Log(
+                "Server",
+                "Spawn policy: botSafeRuntimeSpawns=" + _useBotSafeRuntimeSpawns
+                + " botSafeSpawnCount=" + arena.BotSafeSpawnCells.Count
+                + " legacySpawnCount=" + arena.SpawnCells.Count
+                + " botSafeEggSpawns=" + _useBotSafeEggSpawns
+                + " botSafeEggCount=" + arena.BotSafeEggCells.Count
+                + " legacyEggCount=" + arena.CandidateEggCells.Count + ".");
         }
 
         public IReadOnlyList<PlayerProfile> Profiles
@@ -106,7 +119,7 @@ namespace EggTest.Server
                     Color = _config.PlayerPalette[i % _config.PlayerPalette.Length],
                 };
 
-                GridCell spawnCell = _arena.GetSpawnCell(i);
+                GridCell spawnCell = _useBotSafeRuntimeSpawns ? _arena.GetBotSafeSpawnCell(i) : _arena.GetSpawnCell(i);
                 ServerPlayerState player = new ServerPlayerState
                 {
                     Profile = profile,
@@ -119,7 +132,11 @@ namespace EggTest.Server
 
                 _players.Add(playerId, player);
                 _profiles.Add(profile);
-                GameTrace.Verbose("Match", "Spawned " + profile.DisplayName + " at " + spawnCell + " (" + profile.Kind + ").");
+                GameTrace.Verbose(
+                    "Match",
+                    "Spawned " + profile.DisplayName + " at " + spawnCell + " (" + profile.Kind + ")"
+                    + " walkable=" + _arena.IsWalkable(spawnCell)
+                    + " clearForBot=" + _arena.IsClearForBot(spawnCell) + ".");
             }
 
             MatchStartedMessage message = new MatchStartedMessage
@@ -232,14 +249,38 @@ namespace EggTest.Server
                 bool shouldReconsider = brain.TargetEggId == null || brain.RetargetTimer <= 0f;
                 if (brain.TargetEggId.HasValue && !_eggs.ContainsKey(brain.TargetEggId.Value))
                 {
+                    GameTrace.Log("AI", player.Profile.DisplayName + " lost target " + brain.TargetEggId.Value + " because the egg no longer exists.");
                     shouldReconsider = true;
                 }
 
                 if (shouldReconsider && brain.ThinkDelay <= 0f)
                 {
+                    GameTrace.Log(
+                        "AI",
+                        player.Profile.DisplayName + " rebuilding plan. target=" + (brain.TargetEggId.HasValue ? brain.TargetEggId.Value.ToString() : "None")
+                        + " retargetTimer=" + brain.RetargetTimer.ToString("F2")
+                        + " thinkDelay=" + brain.ThinkDelay.ToString("F2")
+                        + " eggs=" + _eggs.Count + ".");
                     RebuildBotPlan(player);
                     brain.RetargetTimer = _config.BotRetargetInterval;
                     brain.ThinkDelay = RandomRange(_config.BotDecisionMinDelay, _config.BotDecisionMaxDelay);
+                    GameTrace.Log(
+                        "AI",
+                        player.Profile.DisplayName + " finished rebuild. newTarget=" + (brain.TargetEggId.HasValue ? brain.TargetEggId.Value.ToString() : "None")
+                        + " pathCells=" + brain.CurrentPath.Count
+                        + " nextWaypointIndex=" + brain.NextWaypointIndex
+                        + " nextThinkDelay=" + brain.ThinkDelay.ToString("F2") + ".");
+                }
+                else if (shouldReconsider && player.MoveDirection == Vector2.zero)
+                {
+                    GameTrace.LogEvery(
+                        "AI",
+                        player.Profile.Id.ToString() + ":WaitingRebuild",
+                        0.50f,
+                        player.Profile.DisplayName + " is idle while waiting to rebuild. target=" + (brain.TargetEggId.HasValue ? brain.TargetEggId.Value.ToString() : "None")
+                        + " thinkDelay=" + brain.ThinkDelay.ToString("F2")
+                        + " retargetTimer=" + brain.RetargetTimer.ToString("F2")
+                        + " eggs=" + _eggs.Count + ".");
                 }
 
                 ApplyBotMoveDirection(player);
@@ -256,14 +297,23 @@ namespace EggTest.Server
             if (_eggs.Count == 0)
             {
                 player.MoveDirection = Vector2.zero;
-                GameTrace.Verbose("AI", player.Profile.DisplayName + " has no egg target because no eggs are active.");
+                GameTrace.Log("AI", player.Profile.DisplayName + " has no egg target because no eggs are active.");
                 return;
             }
 
-            GridCell startCell = _arena.WorldToCell(player.Position);
+            GridCell startCell = ResolveBotStartCell(player);
             float bestScore = float.MaxValue;
             EggId? bestEggId = null;
             _bestPathBuffer.Clear();
+            StringBuilder evaluation = new StringBuilder();
+            evaluation.Append(player.Profile.DisplayName)
+                .Append(" evaluating from ")
+                .Append(startCell)
+                .Append(" walkable=")
+                .Append(_arena.IsWalkable(startCell))
+                .Append(" clearForBot=")
+                .Append(_arena.IsClearForBot(startCell))
+                .Append('.');
 
             foreach (KeyValuePair<EggId, ServerEggState> eggPair in _eggs)
             {
@@ -272,6 +322,15 @@ namespace EggTest.Server
                 _pathBuffer.Clear();
                 if (!_pathfinder.TryFindPath(startCell, goalCell, _pathBuffer))
                 {
+                    evaluation.Append(" [")
+                        .Append(egg.Id)
+                        .Append(" goal=")
+                        .Append(goalCell)
+                        .Append(" walkable=")
+                        .Append(_arena.IsWalkable(goalCell))
+                        .Append(" clearForBot=")
+                        .Append(_arena.IsClearForBot(goalCell))
+                        .Append(" path=FAIL]");
                     continue;
                 }
 
@@ -280,6 +339,15 @@ namespace EggTest.Server
                 float contestPenalty = EstimateContestPenalty(player.Profile.Id, egg.Position);
                 float noise = RandomRange(0f, _config.BotRandomScoreNoise);
                 float totalScore = pathLengthCost + directDistance + contestPenalty + noise;
+                evaluation.Append(" [")
+                    .Append(egg.Id)
+                    .Append(" goal=")
+                    .Append(goalCell)
+                    .Append(" len=")
+                    .Append(_pathBuffer.Count)
+                    .Append(" score=")
+                    .Append(totalScore.ToString("F2"))
+                    .Append("]");
 
                 if (totalScore < bestScore)
                 {
@@ -293,7 +361,7 @@ namespace EggTest.Server
             if (!bestEggId.HasValue || _bestPathBuffer.Count == 0)
             {
                 player.MoveDirection = Vector2.zero;
-                GameTrace.Verbose("AI", player.Profile.DisplayName + " could not find a reachable egg.");
+                GameTrace.Warn("AI", evaluation + " => no reachable egg.");
                 return;
             }
 
@@ -301,7 +369,7 @@ namespace EggTest.Server
             brain.CurrentPath.Clear();
             brain.CurrentPath.AddRange(_bestPathBuffer);
             brain.NextWaypointIndex = brain.CurrentPath.Count > 1 ? 1 : 0;
-            GameTrace.Verbose("AI", player.Profile.DisplayName + " targeted " + bestEggId.Value + " with path length " + _bestPathBuffer.Count + ".");
+            GameTrace.Log("AI", evaluation + " => selected " + bestEggId.Value + " len=" + _bestPathBuffer.Count + ".");
         }
 
         private void ApplyBotMoveDirection(ServerPlayerState player)
@@ -310,6 +378,16 @@ namespace EggTest.Server
             if (brain.TargetEggId == null || brain.CurrentPath.Count == 0)
             {
                 player.MoveDirection = Vector2.zero;
+                if (_eggs.Count > 0)
+                {
+                    GameTrace.LogEvery(
+                        "AI",
+                        player.Profile.Id.ToString() + ":NoPath",
+                        0.50f,
+                        player.Profile.DisplayName + " has eggs available but no active target/path. eggs=" + _eggs.Count
+                        + " thinkDelay=" + brain.ThinkDelay.ToString("F2")
+                        + " retargetTimer=" + brain.RetargetTimer.ToString("F2") + ".");
+                }
                 return;
             }
 
@@ -322,7 +400,7 @@ namespace EggTest.Server
                 brain.NextWaypointIndex = 0;
                 brain.RetargetTimer = 0f;
                 player.MoveDirection = Vector2.zero;
-                GameTrace.Verbose("AI", player.Profile.DisplayName + " exhausted its path and will retarget.");
+                GameTrace.Log("AI", player.Profile.DisplayName + " exhausted its path unexpectedly and will retarget.");
                 return;
             }
 
@@ -335,11 +413,17 @@ namespace EggTest.Server
                 brain.NextWaypointIndex++;
                 if (brain.NextWaypointIndex >= brain.CurrentPath.Count)
                 {
+                    EggId completedTarget = brain.TargetEggId.Value;
                     brain.TargetEggId = null;
                     brain.CurrentPath.Clear();
                     brain.NextWaypointIndex = 0;
                     brain.RetargetTimer = 0f;
                     player.MoveDirection = Vector2.zero;
+                    GameTrace.Log(
+                        "AI",
+                        player.Profile.DisplayName + " reached the end of its path for " + completedTarget
+                        + ". eggStillExists=" + _eggs.ContainsKey(completedTarget)
+                        + " remainingEggs=" + _eggs.Count + ".");
                     return;
                 }
 
@@ -406,9 +490,10 @@ namespace EggTest.Server
         private void SpawnEgg()
         {
             _availableEggCellsBuffer.Clear();
-            for (int i = 0; i < _arena.CandidateEggCells.Count; i++)
+            IReadOnlyList<GridCell> eggSpawnCells = _useBotSafeEggSpawns ? _arena.BotSafeEggCells : _arena.CandidateEggCells;
+            for (int i = 0; i < eggSpawnCells.Count; i++)
             {
-                GridCell cell = _arena.CandidateEggCells[i];
+                GridCell cell = eggSpawnCells[i];
                 if (IsCellOccupiedByEgg(cell))
                 {
                     continue;
@@ -438,6 +523,31 @@ namespace EggTest.Server
                 Egg = CloneEgg(egg),
             }, _currentTransportTime);
             GameTrace.Log("Spawn", "Spawned " + egg.Id + " at cell " + spawnCell + " with palette index " + egg.PaletteIndex + ".");
+            if (_useBotSafeEggSpawns && !_arena.IsClearForBot(spawnCell))
+            {
+                GameTrace.Warn("Spawn", egg.Id + " spawned on a cell that is walkable for players but blocked for bot-clearance routing: " + spawnCell + ".");
+            }
+        }
+
+        private GridCell ResolveBotStartCell(ServerPlayerState player)
+        {
+            GridCell rawStartCell = _arena.WorldToCell(player.Position);
+            if (_arena.IsClearForBot(rawStartCell))
+            {
+                return rawStartCell;
+            }
+
+            GridCell resolvedCell;
+            if (_arena.TryFindNearestBotSafeCell(rawStartCell, out resolvedCell))
+            {
+                GameTrace.Log(
+                    "AI",
+                    player.Profile.DisplayName + " remapped start cell from " + rawStartCell + " to nearest bot-safe cell " + resolvedCell + ".");
+                return resolvedCell;
+            }
+
+            GameTrace.Warn("AI", player.Profile.DisplayName + " could not resolve a bot-safe start cell from " + rawStartCell + ".");
+            return rawStartCell;
         }
 
         private bool IsCellOccupiedByEgg(GridCell cell)
@@ -523,7 +633,14 @@ namespace EggTest.Server
             {
                 if (pair.Value.BotBrain != null)
                 {
+                    string previousTarget = pair.Value.BotBrain.TargetEggId.HasValue ? pair.Value.BotBrain.TargetEggId.Value.ToString() : "None";
                     pair.Value.BotBrain.RetargetTimer = 0f;
+                    GameTrace.Log(
+                        "AI",
+                        "Forced retarget for " + pair.Value.Profile.DisplayName
+                        + " after " + eggId + " was collected. previousTarget=" + previousTarget
+                        + " thinkDelay=" + pair.Value.BotBrain.ThinkDelay.ToString("F2")
+                        + " pathCells=" + pair.Value.BotBrain.CurrentPath.Count + ".");
                 }
             }
         }

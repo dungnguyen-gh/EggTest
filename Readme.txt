@@ -113,6 +113,18 @@ Optimization Applied
   - arena spawn/egg-cell rules
   - pathfinding correctness
 
+- **Bot-safe pathfinding integration**  
+  Bots now route against a clearance-aware grid while runtime bot spawns and server egg spawns are constrained to bot-safe cells, avoiding mismatches between authored walkable space and bot navigation space.
+
+- **Primary-region filtering for bot navigation**  
+  Bot-safe spawns and egg candidates are filtered to the largest connected bot-safe region so bots cannot be stranded in disconnected map islands after obstacle inflation.
+
+- **Map topology fix for inflated blockers**  
+  The default obstacle layout was widened so clearance inflation no longer seals the left corridor, preserving smooth bot movement without removing the custom pathfinding safety margin.
+
+- **Runtime safety polish**  
+  Player-count changes are clamped against the map's supported bot-safe capacity, and debug log throttling is reset on fresh runtime setup/restart to keep diagnostics deterministic across matches.
+
 How to Run and Verify
 ---------------------
 1. Open the project in **Unity 2022.3.62f1**.
@@ -136,6 +148,7 @@ Suggested manual verification:
 - Exit button stops Play Mode in the editor / quits in a build
 - local movement remains responsive
 - bots route around blockers and chase eggs
+- bots can leave the left side of the arena and are not trapped by inflated obstacle corridors
 - eggs spawn/despawn/score correctly
 - restarting the match multiple times remains stable
 - when time expires, a game-over popup appears with winner + restart/exit
@@ -144,6 +157,10 @@ Suggested manual verification:
 Automated verification:
 - open **Window > General > Test Runner**
 - run all **EditMode** tests
+- recommended focus areas:
+  - bot-safe spawn / egg reachability tests
+  - pathfinding detour / unreachable cases
+  - log throttle reset behavior
 
 Known Limitations
 -----------------
@@ -153,3 +170,9 @@ Known Limitations
 - The transport still passes in-memory message objects rather than serialized wire payloads.
 - Packet loss / out-of-order delivery simulation is not implemented yet.
 - The project is a single-scene prototype, not a production multiplayer framework.
+
+Recent Stability Notes
+----------------------
+- The bot movement issues previously seen around obstacle corners were addressed structurally instead of with ad-hoc fallback steering.
+- Clearance-aware pathfinding remains enabled, but the arena and spawn rules were updated so the bot-safe graph stays connected in the default map.
+- Current manual playtesting confirms smooth bot movement, stable restart flow, and no observed bot soft-locks in the latest default configuration.

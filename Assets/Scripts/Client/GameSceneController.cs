@@ -73,6 +73,7 @@ namespace EggTest.Client
             ResolveSceneContract(createMissing: true);
             EnsurePresentationInfrastructure();
             GameTrace.Configure(_config.EnableDebugLogs, _config.EnableVerboseDebugLogs);
+            GameTrace.ResetThrottleState();
             ShowMainMenu();
         }
 
@@ -125,7 +126,7 @@ namespace EggTest.Client
 
         public void ChangePlayerCount(int delta)
         {
-            int maxPlayers = Mathf.Max(2, (_config.GridWidth * _config.GridHeight) - ArenaDefinition.CreateDefault(_config).BlockedCells.Count);
+            int maxPlayers = GetMaxSupportedPlayerCount();
             _config.PlayerCount = Mathf.Clamp(_config.PlayerCount + delta, 2, maxPlayers);
             if (_flowState != GameFlowState.MainMenu)
             {
@@ -197,6 +198,7 @@ namespace EggTest.Client
         {
             _config = new GameConfig();
             _arena = ArenaDefinition.CreateDefault(_config);
+            _config.PlayerCount = Mathf.Clamp(_config.PlayerCount, 2, _arena.MaxSupportedPlayerCount);
             _arenaSceneBuilder = new ArenaSceneBuilder();
             _presentationSetup = new ScenePresentationSetup();
             _selectedPreset = _config.DefaultNetworkPreset;
@@ -240,6 +242,8 @@ namespace EggTest.Client
         {
             TeardownRuntimeMatch();
             _arena = ArenaDefinition.CreateDefault(_config);
+            _config.PlayerCount = Mathf.Clamp(_config.PlayerCount, 2, _arena.MaxSupportedPlayerCount);
+            GameTrace.ResetThrottleState();
             _arenaSceneBuilder.EnsureRuntimeArenaVisuals(_sceneContract, _arena);
 
             _transport = new SimulatedTransport(_config.RandomSeed, _selectedPreset);
@@ -355,6 +359,12 @@ namespace EggTest.Client
             {
                 _hud.ShowMainMenu();
             }
+        }
+
+        private int GetMaxSupportedPlayerCount()
+        {
+            ArenaDefinition previewArena = ArenaDefinition.CreateDefault(_config);
+            return previewArena.MaxSupportedPlayerCount;
         }
 
 #if UNITY_EDITOR

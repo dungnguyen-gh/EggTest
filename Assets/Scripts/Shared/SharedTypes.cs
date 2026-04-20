@@ -158,8 +158,12 @@ namespace EggTest.Shared
     public sealed class ArenaDefinition
     {
         private readonly HashSet<GridCell> _blockedCells;
+        private readonly HashSet<GridCell> _clearanceBlockedCells;
+        private readonly HashSet<GridCell> _primaryBotSafeRegionCells;
         private readonly List<GridCell> _spawnCells;
+        private readonly List<GridCell> _botSafeSpawnCells;
         private readonly List<GridCell> _candidateEggCells;
+        private readonly List<GridCell> _botSafeEggCells;
         private readonly List<GridCell> _walkableCells;
 
         public int Width { get; private set; }
@@ -176,14 +180,43 @@ namespace EggTest.Shared
             get { return _spawnCells; }
         }
 
+        public IReadOnlyList<GridCell> BotSafeSpawnCells
+        {
+            get { return _botSafeSpawnCells; }
+        }
+
+        public IReadOnlyCollection<GridCell> ClearanceBlockedCells
+        {
+            get { return _clearanceBlockedCells; }
+        }
+
+        public IReadOnlyCollection<GridCell> PrimaryBotSafeRegionCells
+        {
+            get { return _primaryBotSafeRegionCells; }
+        }
+
         public IReadOnlyList<GridCell> CandidateEggCells
         {
             get { return _candidateEggCells; }
         }
 
+        public IReadOnlyList<GridCell> BotSafeEggCells
+        {
+            get { return _botSafeEggCells; }
+        }
+
         public IReadOnlyList<GridCell> WalkableCells
         {
             get { return _walkableCells; }
+        }
+
+        public int MaxSupportedPlayerCount
+        {
+            get
+            {
+                int preferredCapacity = _primaryBotSafeRegionCells.Count > 0 ? _primaryBotSafeRegionCells.Count : _walkableCells.Count;
+                return Mathf.Max(2, preferredCapacity);
+            }
         }
 
         public ArenaDefinition(int width, int height, float cellSize, IEnumerable<GridCell> blockedCells, IEnumerable<GridCell> spawnCells)
@@ -193,8 +226,12 @@ namespace EggTest.Shared
             CellSize = cellSize;
             _blockedCells = new HashSet<GridCell>(blockedCells);
             _spawnCells = new List<GridCell>(spawnCells);
+            _botSafeSpawnCells = new List<GridCell>();
+            _primaryBotSafeRegionCells = new HashSet<GridCell>();
+            _clearanceBlockedCells = BuildClearanceBlockedCells(width, height, _blockedCells, configRadiusCells: 1);
             _walkableCells = BuildWalkableCells();
             _candidateEggCells = BuildCandidateEggCells();
+            _botSafeEggCells = new List<GridCell>();
         }
 
         public bool IsInside(GridCell cell)
@@ -205,6 +242,11 @@ namespace EggTest.Shared
         public bool IsWalkable(GridCell cell)
         {
             return IsInside(cell) && !_blockedCells.Contains(cell);
+        }
+
+        public bool IsClearForBot(GridCell cell)
+        {
+            return IsInside(cell) && !_clearanceBlockedCells.Contains(cell);
         }
 
         public Vector3 CellToWorld(GridCell cell)
@@ -231,6 +273,50 @@ namespace EggTest.Shared
             return _spawnCells[index % _spawnCells.Count];
         }
 
+        public GridCell GetBotSafeSpawnCell(int index)
+        {
+            if (_botSafeSpawnCells.Count == 0)
+            {
+                return GetSpawnCell(index);
+            }
+
+            return _botSafeSpawnCells[index % _botSafeSpawnCells.Count];
+        }
+
+        public bool TryFindNearestBotSafeCell(GridCell origin, out GridCell resolved)
+        {
+            if (IsClearForBot(origin))
+            {
+                resolved = origin;
+                return true;
+            }
+
+            int maxRadius = Mathf.Max(Width, Height);
+            for (int radius = 1; radius <= maxRadius; radius++)
+            {
+                for (int offsetX = -radius; offsetX <= radius; offsetX++)
+                {
+                    for (int offsetY = -radius; offsetY <= radius; offsetY++)
+                    {
+                        if (Mathf.Max(Mathf.Abs(offsetX), Mathf.Abs(offsetY)) != radius)
+                        {
+                            continue;
+                        }
+
+                        GridCell candidate = new GridCell(origin.X + offsetX, origin.Y + offsetY);
+                        if (IsClearForBot(candidate))
+                        {
+                            resolved = candidate;
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            resolved = origin;
+            return false;
+        }
+
         public static ArenaDefinition CreateDefault(GameConfig config)
         {
             List<GridCell> blocked = new List<GridCell>();
@@ -249,13 +335,13 @@ namespace EggTest.Shared
             }
 
             // Side walls that create interesting path splits for the bots.
-            for (int y = 1; y <= 4; y++)
+            for (int y = 1; y <= 3; y++)
             {
                 blocked.Add(new GridCell(4, y));
                 blocked.Add(new GridCell(15, y + 5));
             }
 
-            for (int y = 7; y <= 10; y++)
+            for (int y = 8; y <= 10; y++)
             {
                 blocked.Add(new GridCell(4, y));
                 blocked.Add(new GridCell(15, y - 5));
@@ -263,7 +349,32 @@ namespace EggTest.Shared
 
             List<GridCell> spawns = BuildSpawnCells(config, blocked);
 
-            return new ArenaDefinition(config.GridWidth, config.GridHeight, config.CellSize, blocked, spawns);
+            ArenaDefinition arena = new ArenaDefinition(config.GridWidth, config.GridHeight, config.CellSize, blocked, spawns);
+            arena.RebuildClearanceBlockedCells(config);
+            return arena;
+        }
+
+        private void RebuildClearanceBlockedCells(GameConfig config)
+        {
+            _clearanceBlockedCells.Clear();
+
+            HashSet<GridCell> rebuilt = BuildClearanceBlockedCells(
+                Width,
+                Height,
+                _blockedCells,
+                Mathf.Max(0, config.BotClearanceInflationRadiusCells));
+
+            foreach (GridCell cell in rebuilt)
+            {
+                _clearanceBlockedCells.Add(cell);
+            }
+
+            if (config.BotUseCornerSafetyInflation)
+            {
+                AddCornerSafetyInflation(_clearanceBlockedCells);
+            }
+
+            RebuildBotSafeCaches(config);
         }
 
         private static List<GridCell> BuildSpawnCells(GameConfig config, List<GridCell> blocked)
@@ -338,6 +449,35 @@ namespace EggTest.Shared
             return Mathf.Abs(cell.X - centerX) + Mathf.Abs(cell.Y - centerY);
         }
 
+        private void RebuildBotSafeCaches(GameConfig config)
+        {
+            _botSafeSpawnCells.Clear();
+            _botSafeEggCells.Clear();
+            _primaryBotSafeRegionCells.Clear();
+
+            List<GridCell> botSafeCandidates = new List<GridCell>();
+            for (int x = 0; x < Width; x++)
+            {
+                for (int y = 0; y < Height; y++)
+                {
+                    GridCell cell = new GridCell(x, y);
+                    if (IsClearForBot(cell))
+                    {
+                        botSafeCandidates.Add(cell);
+                    }
+                }
+            }
+
+            List<GridCell> primaryRegion = BuildLargestConnectedRegion(botSafeCandidates);
+            for (int i = 0; i < primaryRegion.Count; i++)
+            {
+                _primaryBotSafeRegionCells.Add(primaryRegion[i]);
+            }
+
+            _botSafeSpawnCells.AddRange(SelectDistributedCells(config, primaryRegion, Mathf.Clamp(config.PlayerCount, 0, primaryRegion.Count)));
+            _botSafeEggCells.AddRange(BuildEggCandidateCells(_botSafeSpawnCells, useBotClearance: true, allowedCells: _primaryBotSafeRegionCells));
+        }
+
         private List<GridCell> BuildWalkableCells()
         {
             List<GridCell> result = new List<GridCell>();
@@ -358,6 +498,11 @@ namespace EggTest.Shared
 
         private List<GridCell> BuildCandidateEggCells()
         {
+            return BuildEggCandidateCells(_spawnCells, useBotClearance: false, allowedCells: null);
+        }
+
+        private List<GridCell> BuildEggCandidateCells(IReadOnlyList<GridCell> referenceSpawns, bool useBotClearance, HashSet<GridCell> allowedCells)
+        {
             List<GridCell> result = new List<GridCell>();
 
             for (int x = 0; x < Width; x++)
@@ -365,15 +510,21 @@ namespace EggTest.Shared
                 for (int y = 0; y < Height; y++)
                 {
                     GridCell cell = new GridCell(x, y);
-                    if (!IsWalkable(cell))
+                    bool validCell = useBotClearance ? IsClearForBot(cell) : IsWalkable(cell);
+                    if (!validCell)
+                    {
+                        continue;
+                    }
+
+                    if (allowedCells != null && !allowedCells.Contains(cell))
                     {
                         continue;
                     }
 
                     bool tooCloseToSpawn = false;
-                    for (int i = 0; i < _spawnCells.Count; i++)
+                    for (int i = 0; i < referenceSpawns.Count; i++)
                     {
-                        GridCell spawn = _spawnCells[i];
+                        GridCell spawn = referenceSpawns[i];
                         int manhattanDistance = Mathf.Abs(spawn.X - cell.X) + Mathf.Abs(spawn.Y - cell.Y);
                         if (manhattanDistance < 3)
                         {
@@ -390,6 +541,163 @@ namespace EggTest.Shared
             }
 
             return result;
+        }
+
+        private List<GridCell> BuildLargestConnectedRegion(List<GridCell> candidates)
+        {
+            List<GridCell> largest = new List<GridCell>();
+            if (candidates.Count == 0)
+            {
+                return largest;
+            }
+
+            HashSet<GridCell> candidateSet = new HashSet<GridCell>(candidates);
+            HashSet<GridCell> visited = new HashSet<GridCell>();
+            Queue<GridCell> queue = new Queue<GridCell>();
+            List<GridCell> componentBuffer = new List<GridCell>();
+
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                GridCell start = candidates[i];
+                if (!visited.Add(start))
+                {
+                    continue;
+                }
+
+                componentBuffer.Clear();
+                queue.Enqueue(start);
+
+                while (queue.Count > 0)
+                {
+                    GridCell current = queue.Dequeue();
+                    componentBuffer.Add(current);
+
+                    EnqueueNeighbor(current.X + 1, current.Y, candidateSet, visited, queue);
+                    EnqueueNeighbor(current.X - 1, current.Y, candidateSet, visited, queue);
+                    EnqueueNeighbor(current.X, current.Y + 1, candidateSet, visited, queue);
+                    EnqueueNeighbor(current.X, current.Y - 1, candidateSet, visited, queue);
+                }
+
+                if (componentBuffer.Count > largest.Count)
+                {
+                    largest.Clear();
+                    largest.AddRange(componentBuffer);
+                }
+            }
+
+            return largest;
+        }
+
+        private static void EnqueueNeighbor(int x, int y, HashSet<GridCell> candidateSet, HashSet<GridCell> visited, Queue<GridCell> queue)
+        {
+            GridCell neighbor = new GridCell(x, y);
+            if (!candidateSet.Contains(neighbor) || !visited.Add(neighbor))
+            {
+                return;
+            }
+
+            queue.Enqueue(neighbor);
+        }
+
+        private static List<GridCell> SelectDistributedCells(GameConfig config, List<GridCell> candidates, int desiredCount)
+        {
+            List<GridCell> available = new List<GridCell>(candidates);
+            List<GridCell> result = new List<GridCell>();
+
+            while (result.Count < desiredCount && available.Count > 0)
+            {
+                int bestIndex = 0;
+                float bestScore = float.MinValue;
+
+                for (int i = 0; i < available.Count; i++)
+                {
+                    GridCell candidate = available[i];
+                    float nearestDistance = float.MaxValue;
+
+                    if (result.Count == 0)
+                    {
+                        nearestDistance = DistanceFromCenter(config, candidate);
+                    }
+                    else
+                    {
+                        for (int j = 0; j < result.Count; j++)
+                        {
+                            GridCell chosen = result[j];
+                            float distance = Mathf.Abs(candidate.X - chosen.X) + Mathf.Abs(candidate.Y - chosen.Y);
+                            if (distance < nearestDistance)
+                            {
+                                nearestDistance = distance;
+                            }
+                        }
+                    }
+
+                    float edgeBonus = DistanceFromCenter(config, candidate);
+                    float score = nearestDistance + edgeBonus * 0.35f;
+                    if (score > bestScore)
+                    {
+                        bestScore = score;
+                        bestIndex = i;
+                    }
+                }
+
+                result.Add(available[bestIndex]);
+                available.RemoveAt(bestIndex);
+            }
+
+            return result;
+        }
+
+        private static HashSet<GridCell> BuildClearanceBlockedCells(int width, int height, HashSet<GridCell> blockedCells, int configRadiusCells)
+        {
+            HashSet<GridCell> result = new HashSet<GridCell>(blockedCells);
+            if (configRadiusCells <= 0)
+            {
+                return result;
+            }
+
+            foreach (GridCell blockedCell in blockedCells)
+            {
+                for (int offsetX = -configRadiusCells; offsetX <= configRadiusCells; offsetX++)
+                {
+                    for (int offsetY = -configRadiusCells; offsetY <= configRadiusCells; offsetY++)
+                    {
+                        GridCell candidate = new GridCell(blockedCell.X + offsetX, blockedCell.Y + offsetY);
+                        if (candidate.X < 0 || candidate.X >= width || candidate.Y < 0 || candidate.Y >= height)
+                        {
+                            continue;
+                        }
+
+                        result.Add(candidate);
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        private void AddCornerSafetyInflation(HashSet<GridCell> clearanceBlocked)
+        {
+            for (int x = 0; x < Width - 1; x++)
+            {
+                for (int y = 0; y < Height - 1; y++)
+                {
+                    GridCell bottomLeft = new GridCell(x, y);
+                    GridCell bottomRight = new GridCell(x + 1, y);
+                    GridCell topLeft = new GridCell(x, y + 1);
+                    GridCell topRight = new GridCell(x + 1, y + 1);
+
+                    bool diagonalA = _blockedCells.Contains(bottomLeft) && _blockedCells.Contains(topRight);
+                    bool diagonalB = _blockedCells.Contains(bottomRight) && _blockedCells.Contains(topLeft);
+
+                    if (diagonalA || diagonalB)
+                    {
+                        clearanceBlocked.Add(bottomLeft);
+                        clearanceBlocked.Add(bottomRight);
+                        clearanceBlocked.Add(topLeft);
+                        clearanceBlocked.Add(topRight);
+                    }
+                }
+            }
         }
     }
 }
