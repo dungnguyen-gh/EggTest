@@ -13,6 +13,7 @@ The prototype is intentionally small and review-friendly:
 - custom grid-based A* pathfinding
 - latency/jitter/spike simulation
 - client prediction plus remote interpolation
+- a lightweight start menu before gameplay begins
 
 Requirement Coverage
 --------------------
@@ -27,6 +28,9 @@ Requirement Coverage
 
 - **Keyboard local player + simulated remote players**  
   Local player uses Unity's New Input System action asset; bots are driven by server-side AI.
+
+- **Start menu, countdown, and exit flow**  
+  The scene opens into a lightweight main menu; pressing **Start** initializes the runtime, shows a short prepare countdown, and then begins the match. Exit is available from the menu, during gameplay, and from the game-over popup.
 
 - **Remote bots find shortest path and avoid obstacles**  
   Bots evaluate reachable eggs through custom A* over a blocked grid.
@@ -116,18 +120,25 @@ How to Run and Verify
 3. Open `Assets/Scenes/SampleScene.unity`.
 4. Press **Play**.
 5. Move with **WASD** or **arrow keys**.
-6. Use the right-side debug panel to:
+6. Press **Start Game** in the main menu.
+7. Wait for the short prepare countdown to finish.
+8. Use the right-side debug panel to:
    - change player count
    - change match duration
    - switch network preset
    - toggle latency spike simulation
    - restart the match
+   - exit the game
 
 Suggested manual verification:
+- start menu appears before gameplay begins
+- Start button transitions into a short countdown and then gameplay HUD
+- Exit button stops Play Mode in the editor / quits in a build
 - local movement remains responsive
 - bots route around blockers and chase eggs
 - eggs spawn/despawn/score correctly
 - restarting the match multiple times remains stable
+- when time expires, a game-over popup appears with winner + restart/exit
 - presets Stable / Low / Medium / High still produce expected smoothing differences
 
 Automated verification:

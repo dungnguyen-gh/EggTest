@@ -61,6 +61,16 @@ namespace EggTest.Client
             get { return NetworkPresetProfiles.Get(_transport.CurrentPreset); }
         }
 
+        public bool MatchEnded
+        {
+            get { return _matchEnded; }
+        }
+
+        public string WinnerSummary
+        {
+            get { return _winnerText; }
+        }
+
         public ClientGameController(GameConfig config, ArenaDefinition arena, INetworkTransport transport, Transform playersRoot, Transform eggsRoot, HudPresenter hud)
         {
             _config = config;

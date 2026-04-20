@@ -1,9 +1,7 @@
 using EggTest.Server;
 using EggTest.Shared;
 using UnityEngine;
-using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
-using UnityEngine.InputSystem.UI;
 
 #if UNITY_EDITOR
 using UnityEditor;
@@ -18,12 +16,15 @@ namespace EggTest.Client
     /// </summary>
     public sealed class GameSceneController : MonoBehaviour
     {
-        private const string WorldRootName = "World";
-        private const string ArenaRootName = "Arena";
-        private const string ObstaclesRootName = "Obstacles";
-        private const string PlayersRootName = "Players";
-        private const string EggsRootName = "Eggs";
-        private const string HudObjectName = "HUD";
+        private enum GameFlowState
+        {
+            MainMenu,
+            Countdown,
+            Playing,
+            GameOver,
+        }
+
+        private const float CountdownDurationSeconds = 3f;
 
         private static GameSceneController _instance;
 
@@ -40,8 +41,13 @@ namespace EggTest.Client
         private ServerSimulator _server;
         private ClientGameController _client;
         private LocalPlayerInput _localInput;
+        private SceneContract _sceneContract;
+        private ArenaSceneBuilder _arenaSceneBuilder;
+        private ScenePresentationSetup _presentationSetup;
         private NetworkSimulationPreset _selectedPreset;
         private bool _spikeEnabled;
+        private GameFlowState _flowState;
+        private float _countdownRemaining;
 
         private LocalPlayerInput LocalInput
         {
@@ -67,7 +73,7 @@ namespace EggTest.Client
             ResolveSceneContract(createMissing: true);
             EnsurePresentationInfrastructure();
             GameTrace.Configure(_config.EnableDebugLogs, _config.EnableVerboseDebugLogs);
-            RebuildRuntimeMatch();
+            ShowMainMenu();
         }
 
         private void OnDestroy()
@@ -92,30 +98,48 @@ namespace EggTest.Client
 
         private void Update()
         {
-            if (!HasRuntimeMatch())
+            switch (_flowState)
             {
-                return;
-            }
+                case GameFlowState.Countdown:
+                    TickCountdown();
+                    break;
+                case GameFlowState.Playing:
+                    if (!HasRuntimeMatch())
+                    {
+                        return;
+                    }
 
-            TickRuntimeMatch();
+                    TickRuntimeMatch();
+                    if (_client != null && _client.MatchEnded)
+                    {
+                        ShowGameOver();
+                    }
+                    break;
+            }
         }
 
         public void RestartMatch()
         {
-            RebuildRuntimeMatch();
+            StartGame();
         }
 
         public void ChangePlayerCount(int delta)
         {
             int maxPlayers = Mathf.Max(2, (_config.GridWidth * _config.GridHeight) - ArenaDefinition.CreateDefault(_config).BlockedCells.Count);
             _config.PlayerCount = Mathf.Clamp(_config.PlayerCount + delta, 2, maxPlayers);
-            RebuildRuntimeMatch();
+            if (_flowState != GameFlowState.MainMenu)
+            {
+                StartGame();
+            }
         }
 
         public void ChangeMatchDuration(int deltaSeconds)
         {
             _config.MatchDurationSeconds = Mathf.Clamp(_config.MatchDurationSeconds + deltaSeconds, 30f, 300f);
-            RebuildRuntimeMatch();
+            if (_flowState != GameFlowState.MainMenu)
+            {
+                StartGame();
+            }
         }
 
         public void SetNetworkPreset(NetworkSimulationPreset preset)
@@ -133,7 +157,7 @@ namespace EggTest.Client
             _selectedPreset = preset;
             if (_hud != null)
             {
-                _hud.SetNetworkPresetLabel(preset.ToString());
+                _hud.SetNetworkPreset(preset);
             }
         }
 
@@ -152,6 +176,11 @@ namespace EggTest.Client
             get { return _transport != null ? _transport.Settings : null; }
         }
 
+        public NetworkSimulationPreset CurrentPreset
+        {
+            get { return _selectedPreset; }
+        }
+
         private bool TryBecomeSingleton()
         {
             if (_instance != null && _instance != this)
@@ -168,7 +197,10 @@ namespace EggTest.Client
         {
             _config = new GameConfig();
             _arena = ArenaDefinition.CreateDefault(_config);
+            _arenaSceneBuilder = new ArenaSceneBuilder();
+            _presentationSetup = new ScenePresentationSetup();
             _selectedPreset = _config.DefaultNetworkPreset;
+            _flowState = GameFlowState.MainMenu;
         }
 
         private bool HasRuntimeMatch()
@@ -189,19 +221,84 @@ namespace EggTest.Client
             _client.Tick(deltaTime, now);
         }
 
-        private void RebuildRuntimeMatch()
+        public void StartGame()
+        {
+            PrepareRuntimeMatch();
+            BeginCountdown();
+        }
+
+        public void ExitGame()
+        {
+#if UNITY_EDITOR
+            EditorApplication.isPlaying = false;
+#else
+            Application.Quit();
+#endif
+        }
+
+        private void PrepareRuntimeMatch()
         {
             TeardownRuntimeMatch();
             _arena = ArenaDefinition.CreateDefault(_config);
-            EnsureWorldVisualsForRuntime();
+            _arenaSceneBuilder.EnsureRuntimeArenaVisuals(_sceneContract, _arena);
 
             _transport = new SimulatedTransport(_config.RandomSeed, _selectedPreset);
             _transport.SetSpikeEnabled(_spikeEnabled);
             _server = new ServerSimulator(_config, _arena, _transport);
-            _client = new ClientGameController(_config, _arena, _transport, _playersRoot, _eggsRoot, _hud);
+            _client = new ClientGameController(_config, _arena, _transport, _sceneContract.PlayersRoot, _sceneContract.EggsRoot, _sceneContract.Hud);
 
-            BindHud();
+            _presentationSetup.EnsureRuntimePresentation(transform, _sceneContract.Hud, LocalInput.ActionsAsset, _selectedPreset, this);
+        }
+
+        private void BeginCountdown()
+        {
+            _countdownRemaining = CountdownDurationSeconds;
+            _flowState = GameFlowState.Countdown;
+            if (_hud != null)
+            {
+                _hud.ShowCountdown(Mathf.CeilToInt(_countdownRemaining));
+            }
+        }
+
+        private void TickCountdown()
+        {
+            _countdownRemaining -= Time.unscaledDeltaTime;
+            int secondsLeft = Mathf.Max(1, Mathf.CeilToInt(_countdownRemaining));
+            if (_hud != null)
+            {
+                _hud.ShowCountdown(secondsLeft);
+            }
+
+            if (_countdownRemaining > 0f)
+            {
+                return;
+            }
+
+            BeginPlaying();
+        }
+
+        private void BeginPlaying()
+        {
+            if (!HasRuntimeMatch())
+            {
+                return;
+            }
+
             _server.StartMatch(Time.unscaledTimeAsDouble);
+            _flowState = GameFlowState.Playing;
+            if (_hud != null)
+            {
+                _hud.ShowGameplayHud();
+            }
+        }
+
+        private void ShowGameOver()
+        {
+            _flowState = GameFlowState.GameOver;
+            if (_hud != null)
+            {
+                _hud.ShowGameOver(_client != null ? _client.WinnerSummary : "Winner: Unknown");
+            }
         }
 
         private void TeardownRuntimeMatch()
@@ -215,304 +312,48 @@ namespace EggTest.Client
             if (_transport != null)
             {
                 _transport.Clear();
+                _transport = null;
             }
 
-            ClearDynamicChildren(_playersRoot);
-            ClearDynamicChildren(_eggsRoot);
+            _server = null;
+            _flowState = GameFlowState.MainMenu;
+
+            _arenaSceneBuilder.ClearRuntimeDynamicObjects(_sceneContract);
         }
 
         private void ResolveSceneContract(bool createMissing)
         {
-            _worldRoot = ResolveChild(transform, WorldRootName, createMissing);
-            _arenaRoot = ResolveChild(_worldRoot, ArenaRootName, createMissing);
-            _obstaclesRoot = ResolveChild(_arenaRoot, ObstaclesRootName, createMissing);
-            _playersRoot = ResolveChild(_worldRoot, PlayersRootName, createMissing);
-            _eggsRoot = ResolveChild(_worldRoot, EggsRootName, createMissing);
-
-            if (_hud == null)
+            if (_arenaSceneBuilder == null)
             {
-                Transform existingHud = transform.Find(HudObjectName);
-                if (existingHud != null)
-                {
-                    _hud = existingHud.GetComponent<HudPresenter>();
-                }
-
-                if (_hud == null && createMissing)
-                {
-                    GameObject hudObject = new GameObject(HudObjectName);
-                    hudObject.transform.SetParent(transform, false);
-                    _hud = hudObject.AddComponent<HudPresenter>();
-                }
+                _arenaSceneBuilder = new ArenaSceneBuilder();
             }
+
+            _sceneContract = _arenaSceneBuilder.ResolveSceneContract(transform, _hud, createMissing);
+            _worldRoot = _sceneContract.WorldRoot;
+            _arenaRoot = _sceneContract.ArenaRoot;
+            _obstaclesRoot = _sceneContract.ObstaclesRoot;
+            _playersRoot = _sceneContract.PlayersRoot;
+            _eggsRoot = _sceneContract.EggsRoot;
+            _hud = _sceneContract.Hud;
         }
 
         private void EnsurePresentationInfrastructure()
         {
-            EnsureCameraAndLight();
-            EnsureEventSystem();
-            EnsureWorldVisualsForRuntime();
+            if (_presentationSetup == null)
+            {
+                _presentationSetup = new ScenePresentationSetup();
+            }
+
+            _presentationSetup.EnsureRuntimePresentation(transform, _hud, LocalInput.ActionsAsset, _selectedPreset, this);
+            _arenaSceneBuilder.EnsureRuntimeArenaVisuals(_sceneContract, _arena);
+        }
+
+        private void ShowMainMenu()
+        {
+            _flowState = GameFlowState.MainMenu;
             if (_hud != null)
             {
-                _hud.Bind(this);
-            }
-        }
-
-        private void BindHud()
-        {
-            if (_hud == null)
-            {
-                return;
-            }
-
-            _hud.Bind(this);
-            _hud.SetNetworkPresetLabel(_selectedPreset.ToString());
-        }
-
-        private void EnsureCameraAndLight()
-        {
-            Camera camera = Camera.main;
-            if (camera == null)
-            {
-                GameObject cameraObject = new GameObject("Main Camera");
-                cameraObject.tag = "MainCamera";
-                camera = cameraObject.AddComponent<Camera>();
-                cameraObject.AddComponent<AudioListener>();
-            }
-
-            camera.transform.position = new Vector3(0f, 16f, -4f);
-            camera.transform.rotation = Quaternion.Euler(70f, 0f, 0f);
-            camera.fieldOfView = 55f;
-            camera.clearFlags = CameraClearFlags.Skybox;
-
-            Light light = FindObjectOfType<Light>();
-            if (light == null)
-            {
-                GameObject lightObject = new GameObject("Directional Light");
-                light = lightObject.AddComponent<Light>();
-                light.type = LightType.Directional;
-            }
-
-            light.transform.position = new Vector3(0f, 3f, 0f);
-            light.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
-        }
-
-        private void EnsureEventSystem()
-        {
-            EventSystem eventSystem = FindObjectOfType<EventSystem>();
-            GameObject eventSystemObject;
-            if (eventSystem == null)
-            {
-                eventSystemObject = new GameObject("EventSystem");
-                eventSystemObject.transform.SetParent(transform, false);
-                eventSystem = eventSystemObject.AddComponent<EventSystem>();
-            }
-            else
-            {
-                eventSystemObject = eventSystem.gameObject;
-            }
-
-            StandaloneInputModule legacyModule = eventSystemObject.GetComponent<StandaloneInputModule>();
-            if (legacyModule != null)
-            {
-                legacyModule.enabled = false;
-                DestroyComponent(legacyModule);
-            }
-
-            InputSystemUIInputModule uiInputModule = eventSystemObject.GetComponent<InputSystemUIInputModule>();
-            if (uiInputModule == null)
-            {
-                uiInputModule = eventSystemObject.AddComponent<InputSystemUIInputModule>();
-            }
-
-            ConfigureUiInputModule(uiInputModule);
-        }
-
-        private void EnsureWorldVisualsForRuntime()
-        {
-            if (_arenaRoot == null || _obstaclesRoot == null)
-            {
-                return;
-            }
-
-            if (!HasAuthoredArenaVisuals())
-            {
-                EnsureArenaVisuals(rebuildObstacles: true);
-            }
-            else
-            {
-                EnsureArenaBorderOnly();
-            }
-        }
-
-        private bool HasAuthoredArenaVisuals()
-        {
-            return _arenaRoot.Find("Floor") != null && _obstaclesRoot.childCount > 0;
-        }
-
-        private void EnsureArenaBorderOnly()
-        {
-            float arenaWidth = _arena.Width * _arena.CellSize;
-            float arenaHeight = _arena.Height * _arena.CellSize;
-            EnsureBorderWall("NorthBorder", new Vector3(0f, 0.55f, arenaHeight * 0.5f + 0.25f), new Vector3(arenaWidth + 1f, 1.1f, 0.5f));
-            EnsureBorderWall("SouthBorder", new Vector3(0f, 0.55f, -arenaHeight * 0.5f - 0.25f), new Vector3(arenaWidth + 1f, 1.1f, 0.5f));
-            EnsureBorderWall("WestBorder", new Vector3(-arenaWidth * 0.5f - 0.25f, 0.55f, 0f), new Vector3(0.5f, 1.1f, arenaHeight + 1f));
-            EnsureBorderWall("EastBorder", new Vector3(arenaWidth * 0.5f + 0.25f, 0.55f, 0f), new Vector3(0.5f, 1.1f, arenaHeight + 1f));
-        }
-
-        private void EnsureArenaVisuals(bool rebuildObstacles)
-        {
-            if (_arenaRoot == null || _obstaclesRoot == null)
-            {
-                return;
-            }
-
-            float arenaWidth = _arena.Width * _arena.CellSize;
-            float arenaHeight = _arena.Height * _arena.CellSize;
-
-            GameObject floor = GetOrCreatePrimitive(_arenaRoot, "Floor", PrimitiveType.Cube);
-            floor.transform.localPosition = new Vector3(0f, -0.25f, 0f);
-            floor.transform.localScale = new Vector3(arenaWidth, 0.5f, arenaHeight);
-            ApplyRendererColor(floor, new Color(0.18f, 0.22f, 0.26f));
-
-            if (rebuildObstacles)
-            {
-                ClearStaticChildren(_obstaclesRoot);
-                foreach (GridCell blockedCell in _arena.BlockedCells)
-                {
-                    GameObject wall = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                    wall.name = "Wall_" + blockedCell.X + "_" + blockedCell.Y;
-                    wall.transform.SetParent(_obstaclesRoot, false);
-                    wall.transform.position = _arena.CellToWorld(blockedCell) + new Vector3(0f, 0.5f, 0f);
-                    wall.transform.localScale = new Vector3(_arena.CellSize, 1.0f, _arena.CellSize);
-                    ApplyRendererColor(wall, new Color(0.35f, 0.36f, 0.42f));
-                }
-            }
-
-            EnsureArenaBorderOnly();
-        }
-
-        private void EnsureBorderWall(string name, Vector3 position, Vector3 scale)
-        {
-            GameObject wall = GetOrCreatePrimitive(_arenaRoot, name, PrimitiveType.Cube);
-            wall.transform.localPosition = position;
-            wall.transform.localScale = scale;
-            ApplyRendererColor(wall, new Color(0.12f, 0.12f, 0.15f));
-        }
-
-        private static Transform ResolveChild(Transform parent, string name, bool createMissing)
-        {
-            if (parent == null)
-            {
-                return null;
-            }
-
-            Transform existing = parent.Find(name);
-            if (existing != null || !createMissing)
-            {
-                return existing;
-            }
-
-            GameObject child = new GameObject(name);
-            child.transform.SetParent(parent, false);
-            return child.transform;
-        }
-
-        private static GameObject GetOrCreatePrimitive(Transform parent, string name, PrimitiveType primitiveType)
-        {
-            Transform existing = parent.Find(name);
-            if (existing != null)
-            {
-                return existing.gameObject;
-            }
-
-            GameObject created = GameObject.CreatePrimitive(primitiveType);
-            created.name = name;
-            created.transform.SetParent(parent, false);
-            return created;
-        }
-
-        private static void ApplyRendererColor(GameObject target, Color color)
-        {
-            Renderer renderer = target.GetComponent<Renderer>();
-            if (renderer == null)
-            {
-                return;
-            }
-
-            Material material = renderer.sharedMaterial;
-            if (material == null || material.shader == null || material.shader.name != "Standard")
-            {
-                material = new Material(Shader.Find("Standard"));
-            }
-
-            material.color = color;
-            renderer.sharedMaterial = material;
-        }
-
-        private void ConfigureUiInputModule(InputSystemUIInputModule uiInputModule)
-        {
-            if (uiInputModule == null)
-            {
-                return;
-            }
-
-            uiInputModule.UnassignActions();
-            uiInputModule.actionsAsset = LocalInput.ActionsAsset;
-            uiInputModule.move = CreateActionReference("UI/Navigate");
-            uiInputModule.submit = CreateActionReference("UI/Submit");
-            uiInputModule.cancel = CreateActionReference("UI/Cancel");
-            uiInputModule.point = CreateActionReference("UI/Point");
-            uiInputModule.leftClick = CreateActionReference("UI/Click");
-            uiInputModule.rightClick = CreateActionReference("UI/RightClick");
-            uiInputModule.middleClick = CreateActionReference("UI/MiddleClick");
-            uiInputModule.scrollWheel = CreateActionReference("UI/ScrollWheel");
-        }
-
-        private InputActionReference CreateActionReference(string actionPath)
-        {
-            InputAction action = LocalInput.ActionsAsset.FindAction(actionPath, true);
-            return action != null ? InputActionReference.Create(action) : null;
-        }
-
-        private static void DestroyComponent(Component component)
-        {
-            if (component == null)
-            {
-                return;
-            }
-
-            if (Application.isPlaying)
-            {
-                Destroy(component);
-                return;
-            }
-
-            Object.DestroyImmediate(component);
-        }
-
-        private static void ClearDynamicChildren(Transform root)
-        {
-            if (root == null)
-            {
-                return;
-            }
-
-            for (int index = root.childCount - 1; index >= 0; index--)
-            {
-                Destroy(root.GetChild(index).gameObject);
-            }
-        }
-
-        private static void ClearStaticChildren(Transform root)
-        {
-            if (root == null)
-            {
-                return;
-            }
-
-            for (int index = root.childCount - 1; index >= 0; index--)
-            {
-                Destroy(root.GetChild(index).gameObject);
+                _hud.ShowMainMenu();
             }
         }
 
@@ -539,12 +380,21 @@ namespace EggTest.Client
 
         private void AuthorSceneContract()
         {
-            EnsureCameraAndLight();
-            EnsureEventSystem();
+            if (_presentationSetup == null)
+            {
+                _presentationSetup = new ScenePresentationSetup();
+            }
+
+            if (_arenaSceneBuilder == null)
+            {
+                _arenaSceneBuilder = new ArenaSceneBuilder();
+            }
+
+            _presentationSetup.EnsureEditorPresentation(transform, _hud, LocalInput.ActionsAsset, _selectedPreset, this);
 
             GameConfig previewConfig = _config ?? new GameConfig();
             _arena = ArenaDefinition.CreateDefault(previewConfig);
-            EnsureArenaVisualsEditor();
+            _arenaSceneBuilder.EnsureEditorArenaVisuals(_sceneContract, _arena);
 
             if (_hud != null)
             {
@@ -554,71 +404,15 @@ namespace EggTest.Client
             EditorSceneManager.MarkSceneDirty(gameObject.scene);
         }
 
-        public void EnsureArenaVisualsEditor()
-        {
-            if (_arena == null)
-            {
-                _arena = ArenaDefinition.CreateDefault(_config ?? new GameConfig());
-            }
-
-            if (_arenaRoot == null || _obstaclesRoot == null)
-            {
-                ResolveSceneContract(createMissing: true);
-            }
-
-            float arenaWidth = _arena.Width * _arena.CellSize;
-            float arenaHeight = _arena.Height * _arena.CellSize;
-
-            GameObject floor = GetOrCreatePrimitive(_arenaRoot, "Floor", PrimitiveType.Cube);
-            floor.transform.localPosition = new Vector3(0f, -0.25f, 0f);
-            floor.transform.localScale = new Vector3(arenaWidth, 0.5f, arenaHeight);
-            ApplyRendererColor(floor, new Color(0.18f, 0.22f, 0.26f));
-
-            ClearStaticChildrenImmediate(_obstaclesRoot);
-            foreach (GridCell blockedCell in _arena.BlockedCells)
-            {
-                GameObject wall = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                wall.name = "Wall_" + blockedCell.X + "_" + blockedCell.Y;
-                wall.transform.SetParent(_obstaclesRoot, false);
-                wall.transform.position = _arena.CellToWorld(blockedCell) + new Vector3(0f, 0.5f, 0f);
-                wall.transform.localScale = new Vector3(_arena.CellSize, 1.0f, _arena.CellSize);
-                ApplyRendererColor(wall, new Color(0.35f, 0.36f, 0.42f));
-            }
-
-            EnsureBorderWall("NorthBorder", new Vector3(0f, 0.55f, arenaHeight * 0.5f + 0.25f), new Vector3(arenaWidth + 1f, 1.1f, 0.5f));
-            EnsureBorderWall("SouthBorder", new Vector3(0f, 0.55f, -arenaHeight * 0.5f - 0.25f), new Vector3(arenaWidth + 1f, 1.1f, 0.5f));
-            EnsureBorderWall("WestBorder", new Vector3(-arenaWidth * 0.5f - 0.25f, 0.55f, 0f), new Vector3(0.5f, 1.1f, arenaHeight + 1f));
-            EnsureBorderWall("EastBorder", new Vector3(arenaWidth * 0.5f + 0.25f, 0.55f, 0f), new Vector3(0.5f, 1.1f, arenaHeight + 1f));
-        }
-
-        private static void ClearStaticChildrenImmediate(Transform root)
-        {
-            if (root == null)
-            {
-                return;
-            }
-
-            for (int index = root.childCount - 1; index >= 0; index--)
-            {
-                Object.DestroyImmediate(root.GetChild(index).gameObject);
-            }
-        }
-
         private void DestroyExistingSceneAuthoringObjectsImmediate()
         {
-            for (int index = transform.childCount - 1; index >= 0; index--)
+            if (_arenaSceneBuilder == null)
             {
-                Object.DestroyImmediate(transform.GetChild(index).gameObject);
+                _arenaSceneBuilder = new ArenaSceneBuilder();
             }
 
-            EventSystem[] eventSystems = FindObjectsOfType<EventSystem>(true);
-            for (int i = 0; i < eventSystems.Length; i++)
-            {
-                if (eventSystems[i] != null)
-                {
-                    Object.DestroyImmediate(eventSystems[i].gameObject);
-                }
-            }
+            _arenaSceneBuilder.DestroySceneChildrenImmediate(transform);
+            _arenaSceneBuilder.DestroyEventSystemsImmediate();
         }
 #endif
     }
