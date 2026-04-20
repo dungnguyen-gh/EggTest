@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using EggTest.Server;
 using EggTest.Shared;
 using NUnit.Framework;
@@ -245,6 +246,37 @@ namespace EggTest.Tests.EditMode
             bool found = safePathfinder.TryFindPath(new GridCell(0, 2), new GridCell(4, 2), path);
 
             Assert.IsFalse(found);
+        }
+    }
+
+    public sealed class ServerSoftAvoidanceTests
+    {
+        [Test]
+        public void BlendPathWithSeparation_PreservesForwardProgress_WhileAllowingSideBias()
+        {
+            MethodInfo method = typeof(ServerSimulator).GetMethod("BlendPathWithSeparation", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.IsNotNull(method);
+
+            Vector2 pathDirection = Vector2.right;
+            Vector2 separation = Vector2.up * 0.75f;
+            Vector2 combined = (Vector2)method.Invoke(null, new object[] { pathDirection, separation });
+
+            Assert.Greater(combined.x, 0f, "Combined steering should still preserve path progress.");
+            Assert.Greater(combined.y, 0f, "Combined steering should allow side bias away from nearby bots.");
+        }
+
+        [Test]
+        public void ComputeTargetClaimPenalty_IsHigherWhenAnotherBotIsCloserToTheEgg()
+        {
+            MethodInfo method = typeof(ServerSimulator).GetMethod("ComputeTargetClaimPenalty", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.IsNotNull(method);
+
+            GameConfig config = new GameConfig();
+            float farPenalty = (float)method.Invoke(null, new object[] { config, 5f });
+            float nearPenalty = (float)method.Invoke(null, new object[] { config, 0.5f });
+
+            Assert.Greater(nearPenalty, farPenalty);
+            Assert.GreaterOrEqual(farPenalty, config.BotTargetClaimPenalty);
         }
     }
 }

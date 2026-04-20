@@ -336,7 +336,7 @@ namespace EggTest.Server
 
                 float pathLengthCost = _pathBuffer.Count;
                 float directDistance = Vector3.Distance(player.Position, egg.Position) * 0.25f;
-                float contestPenalty = EstimateContestPenalty(player.Profile.Id, egg.Position);
+                float contestPenalty = EstimateContestPenalty(player.Profile.Id, egg.Id, egg.Position);
                 float noise = RandomRange(0f, _config.BotRandomScoreNoise);
                 float totalScore = pathLengthCost + directDistance + contestPenalty + noise;
                 evaluation.Append(" [")
@@ -432,10 +432,13 @@ namespace EggTest.Server
                 toWaypoint.y = 0f;
             }
 
-            player.MoveDirection = GameMath.Cardinalize(new Vector2(toWaypoint.x, toWaypoint.z));
+            Vector2 pathDirection = new Vector2(toWaypoint.x, toWaypoint.z);
+            Vector2 separation = ComputeBotSeparation(player);
+            Vector2 desiredDirection = BlendPathWithSeparation(pathDirection, separation);
+            player.MoveDirection = GameMath.Cardinalize(desiredDirection);
         }
 
-        private float EstimateContestPenalty(PlayerId currentBot, Vector3 eggPosition)
+        private float EstimateContestPenalty(PlayerId currentBot, EggId eggId, Vector3 eggPosition)
         {
             float penalty = 0f;
             foreach (KeyValuePair<PlayerId, ServerPlayerState> pair in _players)
@@ -450,9 +453,100 @@ namespace EggTest.Server
                 {
                     penalty += 0.75f;
                 }
+
+                if (pair.Value.BotBrain != null
+                    && pair.Value.BotBrain.TargetEggId.HasValue
+                    && pair.Value.BotBrain.TargetEggId.Value.Equals(eggId))
+                {
+                    penalty += ComputeTargetClaimPenalty(_config, distance);
+                }
             }
 
             return penalty;
+        }
+
+        private Vector2 ComputeBotSeparation(ServerPlayerState player)
+        {
+            Vector2 separation = Vector2.zero;
+            float separationRadius = Mathf.Max(_config.BotSeparationRadius, _config.BotMinimumPersonalSpace);
+
+            foreach (KeyValuePair<PlayerId, ServerPlayerState> pair in _players)
+            {
+                if (pair.Key.Equals(player.Profile.Id))
+                {
+                    continue;
+                }
+
+                Vector3 delta3 = player.Position - pair.Value.Position;
+                Vector2 delta = new Vector2(delta3.x, delta3.z);
+                float distance = delta.magnitude;
+                if (distance <= 0.001f || distance > separationRadius)
+                {
+                    continue;
+                }
+
+                float closeness = 1f - Mathf.Clamp01(distance / separationRadius);
+                float strength = closeness * _config.BotSeparationStrength;
+
+                if (distance < _config.BotMinimumPersonalSpace)
+                {
+                    float personalSpaceCloseness = 1f - Mathf.Clamp01(distance / _config.BotMinimumPersonalSpace);
+                    strength += personalSpaceCloseness * _config.BotSeparationStrength;
+                }
+
+                separation += (delta / distance) * strength;
+            }
+
+            return separation;
+        }
+
+        private static float ComputeTargetClaimPenalty(GameConfig config, float otherDistanceToEgg)
+        {
+            float penalty = config.BotTargetClaimPenalty;
+            if (otherDistanceToEgg <= 0f)
+            {
+                return penalty * 2f;
+            }
+
+            if (otherDistanceToEgg < config.BotTargetClaimPenaltyDistance)
+            {
+                float closeness = 1f - Mathf.Clamp01(otherDistanceToEgg / config.BotTargetClaimPenaltyDistance);
+                penalty += config.BotTargetClaimPenalty * (0.35f + (closeness * 0.65f));
+            }
+
+            return penalty;
+        }
+
+        private static Vector2 BlendPathWithSeparation(Vector2 pathDirection, Vector2 separation)
+        {
+            if (pathDirection.sqrMagnitude < 0.001f)
+            {
+                return separation;
+            }
+
+            Vector2 normalizedPath = pathDirection.normalized;
+            if (separation.sqrMagnitude < 0.0001f)
+            {
+                return normalizedPath;
+            }
+
+            Vector2 combined = normalizedPath + separation;
+            if (combined.sqrMagnitude < 0.0001f)
+            {
+                return normalizedPath;
+            }
+
+            if (Vector2.Dot(combined, normalizedPath) <= 0f)
+            {
+                combined = normalizedPath + (separation * 0.35f);
+            }
+
+            if (Vector2.Dot(combined, normalizedPath) <= 0f)
+            {
+                return normalizedPath;
+            }
+
+            return combined;
         }
 
         private void MovePlayers(float step)
