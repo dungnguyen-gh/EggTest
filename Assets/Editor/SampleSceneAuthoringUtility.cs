@@ -123,7 +123,48 @@ namespace EggTest.EditorTools
                 || obstacles.childCount == 0
                 || hudCanvas == null
                 || missingInputSystemUiModule
-                || hasLegacyStandaloneModule;
+                || hasLegacyStandaloneModule
+                || HasArenaVisualDrift(controller.transform);
+        }
+
+        private static bool HasArenaVisualDrift(Transform root)
+        {
+            Transform floor = root.Find("World/Arena/Floor");
+            Transform obstacles = root.Find("World/Arena/Obstacles");
+            Transform northBorder = root.Find("World/Arena/NorthBorder");
+
+            return HasUnexpectedColor(floor, ArenaSceneBuilder.FloorColor)
+                || HasUnexpectedColor(northBorder, ArenaSceneBuilder.BorderColor)
+                || HasUnexpectedObstacleColor(obstacles);
+        }
+
+        private static bool HasUnexpectedObstacleColor(Transform obstaclesRoot)
+        {
+            if (obstaclesRoot == null || obstaclesRoot.childCount == 0)
+            {
+                return true;
+            }
+
+            return HasUnexpectedColor(obstaclesRoot.GetChild(0), ArenaSceneBuilder.ObstacleColor);
+        }
+
+        private static bool HasUnexpectedColor(Transform target, Color expectedColor)
+        {
+            if (target == null)
+            {
+                return true;
+            }
+
+            Renderer renderer = target.GetComponent<Renderer>();
+            if (renderer == null || renderer.sharedMaterial == null)
+            {
+                return true;
+            }
+
+            Color actual = renderer.sharedMaterial.color;
+            return Mathf.Abs(actual.r - expectedColor.r) > 0.01f
+                || Mathf.Abs(actual.g - expectedColor.g) > 0.01f
+                || Mathf.Abs(actual.b - expectedColor.b) > 0.01f;
         }
     }
 }

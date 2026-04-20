@@ -10,16 +10,26 @@ namespace EggTest.Client
     /// </summary>
     public sealed class ArenaSceneBuilder
     {
+        private enum MaterialRole
+        {
+            Floor,
+            Obstacle,
+            Border,
+        }
+
         private const string WorldRootName = "World";
         private const string ArenaRootName = "Arena";
         private const string ObstaclesRootName = "Obstacles";
         private const string PlayersRootName = "Players";
         private const string EggsRootName = "Eggs";
         private const string HudObjectName = "HUD";
-        private static readonly int ColorPropertyId = Shader.PropertyToID("_Color");
+        public static readonly Color FloorColor = new Color(0.16f, 0.20f, 0.24f);
+        public static readonly Color ObstacleColor = new Color(0.90f, 0.94f, 0.98f);
+        public static readonly Color BorderColor = new Color(0.09f, 0.12f, 0.17f);
 
-        private readonly MaterialPropertyBlock _materialPropertyBlock = new MaterialPropertyBlock();
-        private Material _baseStandardMaterial;
+        private Material _floorMaterial;
+        private Material _obstacleMaterial;
+        private Material _borderMaterial;
 
         public SceneContract ResolveSceneContract(Transform gameRoot, HudPresenter existingHud, bool createMissing)
         {
@@ -62,7 +72,7 @@ namespace EggTest.Client
             }
             else
             {
-                EnsureArenaBorder(scene, arena);
+                EnsureArenaVisuals(scene, arena, rebuildObstacles: false, immediate: false);
             }
         }
 
@@ -133,7 +143,7 @@ namespace EggTest.Client
             GameObject floor = GetOrCreatePrimitive(scene.ArenaRoot, "Floor", PrimitiveType.Cube);
             floor.transform.localPosition = new Vector3(0f, -0.25f, 0f);
             floor.transform.localScale = new Vector3(arenaWidth, 0.5f, arenaHeight);
-            ApplyRendererColor(floor, new Color(0.18f, 0.22f, 0.26f));
+            ApplyRendererStyle(floor, MaterialRole.Floor);
 
             if (rebuildObstacles)
             {
@@ -145,8 +155,12 @@ namespace EggTest.Client
                     wall.transform.SetParent(scene.ObstaclesRoot, false);
                     wall.transform.position = arena.CellToWorld(blockedCell) + new Vector3(0f, 0.5f, 0f);
                     wall.transform.localScale = new Vector3(arena.CellSize, 1.0f, arena.CellSize);
-                    ApplyRendererColor(wall, Color.white);
+                    ApplyRendererStyle(wall, MaterialRole.Obstacle);
                 }
+            }
+            else
+            {
+                NormalizeExistingObstacleColors(scene);
             }
 
             EnsureArenaBorder(scene, arena);
@@ -173,7 +187,24 @@ namespace EggTest.Client
             GameObject wall = GetOrCreatePrimitive(arenaRoot, name, PrimitiveType.Cube);
             wall.transform.localPosition = position;
             wall.transform.localScale = scale;
-            ApplyRendererColor(wall, new Color(0.12f, 0.12f, 0.15f));
+            ApplyRendererStyle(wall, MaterialRole.Border);
+        }
+
+        private void NormalizeExistingObstacleColors(SceneContract scene)
+        {
+            if (scene == null || scene.ObstaclesRoot == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < scene.ObstaclesRoot.childCount; i++)
+            {
+                Transform child = scene.ObstaclesRoot.GetChild(i);
+                if (child != null)
+                {
+                    ApplyRendererStyle(child.gameObject, MaterialRole.Obstacle);
+                }
+            }
         }
 
         private Transform ResolveChild(Transform parent, string name, bool createMissing)
@@ -208,7 +239,7 @@ namespace EggTest.Client
             return created;
         }
 
-        private void ApplyRendererColor(GameObject target, Color color)
+        private void ApplyRendererStyle(GameObject target, MaterialRole role)
         {
             Renderer renderer = target.GetComponent<Renderer>();
             if (renderer == null)
@@ -216,27 +247,42 @@ namespace EggTest.Client
                 return;
             }
 
-            Material material = renderer.sharedMaterial;
-            if (material == null || material.shader == null || material.shader.name != "Standard")
-            {
-                material = GetOrCreateBaseStandardMaterial();
-                renderer.sharedMaterial = material;
-            }
-
-            renderer.GetPropertyBlock(_materialPropertyBlock);
-            _materialPropertyBlock.SetColor(ColorPropertyId, color);
-            renderer.SetPropertyBlock(_materialPropertyBlock);
+            renderer.sharedMaterial = GetOrCreateMaterial(role);
         }
 
-        private Material GetOrCreateBaseStandardMaterial()
+        private Material GetOrCreateMaterial(MaterialRole role)
         {
-            if (_baseStandardMaterial == null)
+            switch (role)
             {
-                Shader standardShader = Shader.Find("Standard");
-                _baseStandardMaterial = new Material(standardShader);
-            }
+                case MaterialRole.Floor:
+                    if (_floorMaterial == null)
+                    {
+                        _floorMaterial = CreateMaterial("Arena_Floor_Runtime", FloorColor);
+                    }
+                    return _floorMaterial;
 
-            return _baseStandardMaterial;
+                case MaterialRole.Border:
+                    if (_borderMaterial == null)
+                    {
+                        _borderMaterial = CreateMaterial("Arena_Border_Runtime", BorderColor);
+                    }
+                    return _borderMaterial;
+
+                default:
+                    if (_obstacleMaterial == null)
+                    {
+                        _obstacleMaterial = CreateMaterial("Arena_Obstacle_Runtime", ObstacleColor);
+                    }
+                    return _obstacleMaterial;
+            }
+        }
+
+        private static Material CreateMaterial(string materialName, Color color)
+        {
+            Material material = new Material(Shader.Find("Standard"));
+            material.name = materialName;
+            material.color = color;
+            return material;
         }
 
         private void ClearChildren(Transform root, bool immediate)
