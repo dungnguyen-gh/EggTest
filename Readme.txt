@@ -21,7 +21,7 @@ Requirement Coverage
   Implemented in `ServerSimulator` with authoritative timer and match end.
 
 - **N players at match start**  
-  Configurable through `GameConfig.PlayerCount`; one local player, remaining players are remote bots.
+  Configurable from the scene-resident `GameRoot` gameplay settings and adjustable at runtime; one local player, remaining players are remote bots.
 
 - **4-direction movement**  
   Local input is cardinalized and bots also move using grid/cardinal movement.
@@ -58,6 +58,9 @@ Requirement Coverage
 
 - **Handle latency gracefully and allow latency simulation**  
   `SimulatedTransport` supports presets, jitter, and spike simulation.
+
+- **Editor-facing gameplay tuning**  
+  Core gameplay settings (`PlayerCount`, `MatchDurationSeconds`, `TargetActiveEggCount`) can be adjusted in the `GameRoot` inspector before entering Play mode.
 
 Architecture
 ------------
@@ -125,6 +128,9 @@ Optimization Applied
 - **Runtime safety polish**  
   Player-count changes are clamped against the map's supported bot-safe capacity, and debug log throttling is reset on fresh runtime setup/restart to keep diagnostics deterministic across matches.
 
+- **Inspector + runtime config sync**  
+  Scene-authored gameplay settings are the editor-facing source of truth, while runtime HUD controls update both the active match config and the serialized scene-backed values.
+
 How to Run and Verify
 ---------------------
 1. Open the project in **Unity 2022.3.62f1**.
@@ -137,6 +143,7 @@ How to Run and Verify
 8. Use the right-side debug panel to:
    - change player count
    - change match duration
+   - change active egg count
    - switch network preset
    - toggle latency spike simulation
    - restart the match
@@ -146,10 +153,13 @@ Suggested manual verification:
 - start menu appears before gameplay begins
 - Start button transitions into a short countdown and then gameplay HUD
 - Exit button stops Play Mode in the editor / quits in a build
+- gameplay settings can be edited in the `GameRoot` inspector before Play mode
 - local movement remains responsive
 - bots route around blockers and chase eggs
 - bots can leave the left side of the arena and are not trapped by inflated obstacle corridors
 - eggs spawn/despawn/score correctly
+- changing Players / Time / Eggs during gameplay restarts the match immediately without replaying the countdown
+- pressing Start / Restart Match still uses the prepare countdown
 - restarting the match multiple times remains stable
 - when time expires, a game-over popup appears with winner + restart/exit
 - presets Stable / Low / Medium / High still produce expected smoothing differences
@@ -161,6 +171,7 @@ Automated verification:
   - bot-safe spawn / egg reachability tests
   - pathfinding detour / unreachable cases
   - log throttle reset behavior
+  - gameplay setting clamp/sync behavior
 
 Known Limitations
 -----------------
@@ -170,6 +181,7 @@ Known Limitations
 - The transport still passes in-memory message objects rather than serialized wire payloads.
 - Packet loss / out-of-order delivery simulation is not implemented yet.
 - The project is a single-scene prototype, not a production multiplayer framework.
+- The project supports as many players/active eggs as the current arena topology safely allows, rather than resizing the arena dynamically for arbitrarily large sessions.
 
 Recent Stability Notes
 ----------------------

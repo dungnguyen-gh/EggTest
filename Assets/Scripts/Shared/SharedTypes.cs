@@ -219,6 +219,15 @@ namespace EggTest.Shared
             }
         }
 
+        public int MaxSupportedActiveEggCount
+        {
+            get
+            {
+                int preferredCapacity = _botSafeEggCells.Count > 0 ? _botSafeEggCells.Count : _candidateEggCells.Count;
+                return Mathf.Max(1, preferredCapacity);
+            }
+        }
+
         public ArenaDefinition(int width, int height, float cellSize, IEnumerable<GridCell> blockedCells, IEnumerable<GridCell> spawnCells)
         {
             Width = width;

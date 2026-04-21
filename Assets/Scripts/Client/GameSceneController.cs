@@ -16,6 +16,14 @@ namespace EggTest.Client
     /// </summary>
     public sealed class GameSceneController : MonoBehaviour
     {
+        [System.Serializable]
+        private sealed class GameplaySettings
+        {
+            public int PlayerCount = 4;
+            public float MatchDurationSeconds = 90f;
+            public int TargetActiveEggCount = 3;
+        }
+
         private enum GameFlowState
         {
             MainMenu,
@@ -25,6 +33,10 @@ namespace EggTest.Client
         }
 
         private const float CountdownDurationSeconds = 3f;
+        private const int MinPlayerCount = 2;
+        private const float MinMatchDurationSeconds = 30f;
+        private const float MaxMatchDurationSeconds = 300f;
+        private const int MinTargetActiveEggCount = 1;
 
         private static GameSceneController _instance;
 
@@ -34,6 +46,8 @@ namespace EggTest.Client
         [SerializeField] private Transform _playersRoot;
         [SerializeField] private Transform _eggsRoot;
         [SerializeField] private HudPresenter _hud;
+        [Header("Gameplay Settings")]
+        [SerializeField] private GameplaySettings _gameplaySettings = new GameplaySettings();
 
         private GameConfig _config;
         private ArenaDefinition _arena;
@@ -48,6 +62,11 @@ namespace EggTest.Client
         private bool _spikeEnabled;
         private GameFlowState _flowState;
         private float _countdownRemaining;
+
+        private void OnValidate()
+        {
+            ClampSerializedGameplaySettings();
+        }
 
         private LocalPlayerInput LocalInput
         {
@@ -121,25 +140,39 @@ namespace EggTest.Client
 
         public void RestartMatch()
         {
-            StartGame();
+            StartGameWithCountdown();
         }
 
         public void ChangePlayerCount(int delta)
         {
-            int maxPlayers = GetMaxSupportedPlayerCount();
-            _config.PlayerCount = Mathf.Clamp(_config.PlayerCount + delta, 2, maxPlayers);
+            EnsureRuntimeConfig();
+            _config.PlayerCount = Mathf.Clamp(_config.PlayerCount + delta, MinPlayerCount, GetMaxSupportedPlayerCount());
+            SyncSerializedGameplaySettingsFromRuntimeConfig();
             if (_flowState != GameFlowState.MainMenu)
             {
-                StartGame();
+                RestartMatchImmediateForConfigChange();
             }
         }
 
         public void ChangeMatchDuration(int deltaSeconds)
         {
-            _config.MatchDurationSeconds = Mathf.Clamp(_config.MatchDurationSeconds + deltaSeconds, 30f, 300f);
+            EnsureRuntimeConfig();
+            _config.MatchDurationSeconds = Mathf.Clamp(_config.MatchDurationSeconds + deltaSeconds, MinMatchDurationSeconds, MaxMatchDurationSeconds);
+            SyncSerializedGameplaySettingsFromRuntimeConfig();
             if (_flowState != GameFlowState.MainMenu)
             {
-                StartGame();
+                RestartMatchImmediateForConfigChange();
+            }
+        }
+
+        public void ChangeEggCount(int delta)
+        {
+            EnsureRuntimeConfig();
+            _config.TargetActiveEggCount = Mathf.Clamp(_config.TargetActiveEggCount + delta, MinTargetActiveEggCount, GetMaxSupportedEggCount());
+            SyncSerializedGameplaySettingsFromRuntimeConfig();
+            if (_flowState != GameFlowState.MainMenu)
+            {
+                RestartMatchImmediateForConfigChange();
             }
         }
 
@@ -196,9 +229,11 @@ namespace EggTest.Client
 
         private void InitializeRuntimeState()
         {
-            _config = new GameConfig();
+            ClampSerializedGameplaySettings();
+            _config = BuildRuntimeConfigFromSerializedSettings();
             _arena = ArenaDefinition.CreateDefault(_config);
-            _config.PlayerCount = Mathf.Clamp(_config.PlayerCount, 2, _arena.MaxSupportedPlayerCount);
+            ClampRuntimeConfigAgainstArena(_config, _arena);
+            SyncSerializedGameplaySettingsFromRuntimeConfig();
             _arenaSceneBuilder = new ArenaSceneBuilder();
             _presentationSetup = new ScenePresentationSetup();
             _selectedPreset = _config.DefaultNetworkPreset;
@@ -225,8 +260,19 @@ namespace EggTest.Client
 
         public void StartGame()
         {
+            StartGameWithCountdown();
+        }
+
+        private void StartGameWithCountdown()
+        {
             PrepareRuntimeMatch();
             BeginCountdown();
+        }
+
+        private void RestartMatchImmediateForConfigChange()
+        {
+            PrepareRuntimeMatch();
+            BeginPlaying();
         }
 
         public void ExitGame()
@@ -241,8 +287,10 @@ namespace EggTest.Client
         private void PrepareRuntimeMatch()
         {
             TeardownRuntimeMatch();
+            _config = BuildRuntimeConfigFromSerializedSettings();
             _arena = ArenaDefinition.CreateDefault(_config);
-            _config.PlayerCount = Mathf.Clamp(_config.PlayerCount, 2, _arena.MaxSupportedPlayerCount);
+            ClampRuntimeConfigAgainstArena(_config, _arena);
+            SyncSerializedGameplaySettingsFromRuntimeConfig();
             GameTrace.ResetThrottleState();
             _arenaSceneBuilder.EnsureRuntimeArenaVisuals(_sceneContract, _arena);
 
@@ -361,10 +409,92 @@ namespace EggTest.Client
             }
         }
 
+        private void EnsureRuntimeConfig()
+        {
+            if (_config == null)
+            {
+                _config = BuildRuntimeConfigFromSerializedSettings();
+            }
+        }
+
+        private GameConfig BuildRuntimeConfigFromSerializedSettings()
+        {
+            ClampSerializedGameplaySettings();
+
+            GameConfig config = new GameConfig
+            {
+                PlayerCount = _gameplaySettings != null ? _gameplaySettings.PlayerCount : 4,
+                MatchDurationSeconds = _gameplaySettings != null ? _gameplaySettings.MatchDurationSeconds : 90f,
+                TargetActiveEggCount = _gameplaySettings != null ? _gameplaySettings.TargetActiveEggCount : 3,
+            };
+
+            return config;
+        }
+
+        private void SyncSerializedGameplaySettingsFromRuntimeConfig()
+        {
+            if (_config == null)
+            {
+                return;
+            }
+
+            if (_gameplaySettings == null)
+            {
+                _gameplaySettings = new GameplaySettings();
+            }
+
+            _gameplaySettings.PlayerCount = _config.PlayerCount;
+            _gameplaySettings.MatchDurationSeconds = _config.MatchDurationSeconds;
+            _gameplaySettings.TargetActiveEggCount = _config.TargetActiveEggCount;
+        }
+
+        private void ClampSerializedGameplaySettings()
+        {
+            if (_gameplaySettings == null)
+            {
+                _gameplaySettings = new GameplaySettings();
+            }
+
+            _gameplaySettings.PlayerCount = Mathf.Max(MinPlayerCount, _gameplaySettings.PlayerCount);
+            _gameplaySettings.MatchDurationSeconds = Mathf.Clamp(_gameplaySettings.MatchDurationSeconds, MinMatchDurationSeconds, MaxMatchDurationSeconds);
+            _gameplaySettings.TargetActiveEggCount = Mathf.Max(MinTargetActiveEggCount, _gameplaySettings.TargetActiveEggCount);
+
+            GameConfig previewConfig = new GameConfig
+            {
+                PlayerCount = _gameplaySettings.PlayerCount,
+                MatchDurationSeconds = _gameplaySettings.MatchDurationSeconds,
+                TargetActiveEggCount = _gameplaySettings.TargetActiveEggCount,
+            };
+
+            ArenaDefinition previewArena = ArenaDefinition.CreateDefault(previewConfig);
+            _gameplaySettings.PlayerCount = Mathf.Clamp(_gameplaySettings.PlayerCount, MinPlayerCount, previewArena.MaxSupportedPlayerCount);
+            _gameplaySettings.TargetActiveEggCount = Mathf.Clamp(_gameplaySettings.TargetActiveEggCount, MinTargetActiveEggCount, previewArena.MaxSupportedActiveEggCount);
+        }
+
         private int GetMaxSupportedPlayerCount()
         {
+            EnsureRuntimeConfig();
             ArenaDefinition previewArena = ArenaDefinition.CreateDefault(_config);
             return previewArena.MaxSupportedPlayerCount;
+        }
+
+        private int GetMaxSupportedEggCount()
+        {
+            EnsureRuntimeConfig();
+            ArenaDefinition previewArena = ArenaDefinition.CreateDefault(_config);
+            return previewArena.MaxSupportedActiveEggCount;
+        }
+
+        private void ClampRuntimeConfigAgainstArena(GameConfig config, ArenaDefinition arena)
+        {
+            if (config == null || arena == null)
+            {
+                return;
+            }
+
+            config.PlayerCount = Mathf.Clamp(config.PlayerCount, MinPlayerCount, arena.MaxSupportedPlayerCount);
+            config.MatchDurationSeconds = Mathf.Clamp(config.MatchDurationSeconds, MinMatchDurationSeconds, MaxMatchDurationSeconds);
+            config.TargetActiveEggCount = Mathf.Clamp(config.TargetActiveEggCount, MinTargetActiveEggCount, arena.MaxSupportedActiveEggCount);
         }
 
 #if UNITY_EDITOR
@@ -402,7 +532,7 @@ namespace EggTest.Client
 
             _presentationSetup.EnsureEditorPresentation(transform, _hud, LocalInput.ActionsAsset, _selectedPreset, this);
 
-            GameConfig previewConfig = _config ?? new GameConfig();
+            GameConfig previewConfig = _config ?? BuildRuntimeConfigFromSerializedSettings();
             _arena = ArenaDefinition.CreateDefault(previewConfig);
             _arenaSceneBuilder.EnsureEditorArenaVisuals(_sceneContract, _arena);
 

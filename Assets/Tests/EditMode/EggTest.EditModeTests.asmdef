@@ -1,6 +1,7 @@
 {
     "name": "EggTest.EditModeTests",
     "references": [
+        "EggTest.Client",
         "EggTest.Shared",
         "EggTest.Server",
         "UnityEngine.TestRunner",

@@ -457,6 +457,7 @@ namespace EggTest.Client
                 _winnerText,
                 _config.PlayerCount,
                 Mathf.RoundToInt(_config.MatchDurationSeconds),
+                _config.TargetActiveEggCount,
                 _transport.Settings,
                 _config.SnapshotMinInterval,
                 _config.SnapshotMaxInterval,

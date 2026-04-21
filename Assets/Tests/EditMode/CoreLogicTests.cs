@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using EggTest.Client;
 using EggTest.Server;
 using EggTest.Shared;
 using NUnit.Framework;
@@ -143,6 +144,80 @@ namespace EggTest.Tests.EditMode
 
             Assert.GreaterOrEqual(arena.MaxSupportedPlayerCount, config.PlayerCount);
             Assert.AreEqual(arena.PrimaryBotSafeRegionCells.Count, arena.MaxSupportedPlayerCount);
+        }
+
+        [Test]
+        public void CreateDefault_MaxSupportedActiveEggCount_UsesReachableEggCapacity()
+        {
+            GameConfig config = new GameConfig();
+
+            ArenaDefinition arena = ArenaDefinition.CreateDefault(config);
+
+            Assert.GreaterOrEqual(arena.MaxSupportedActiveEggCount, 1);
+            Assert.AreEqual(arena.BotSafeEggCells.Count, arena.MaxSupportedActiveEggCount);
+        }
+
+        [Test]
+        public void CreateDefault_CurrentArenaSupportsMoreThanPreviousUiHardCaps()
+        {
+            GameConfig config = new GameConfig
+            {
+                PlayerCount = 32,
+                TargetActiveEggCount = 32,
+            };
+
+            ArenaDefinition arena = ArenaDefinition.CreateDefault(config);
+
+            Assert.GreaterOrEqual(arena.MaxSupportedPlayerCount, 6);
+            Assert.GreaterOrEqual(arena.MaxSupportedActiveEggCount, 8);
+        }
+    }
+
+    public sealed class GameSceneControllerConfigTests
+    {
+        [Test]
+        public void ClampSerializedGameplaySettings_UsesArenaCapacity_NotLegacyHardCaps()
+        {
+            GameObject gameObject = new GameObject("GameSceneControllerTest");
+            try
+            {
+                GameSceneController controller = gameObject.AddComponent<GameSceneController>();
+                System.Type controllerType = typeof(GameSceneController);
+                FieldInfo gameplaySettingsField = controllerType.GetField("_gameplaySettings", BindingFlags.NonPublic | BindingFlags.Instance);
+                Assert.IsNotNull(gameplaySettingsField);
+
+                object gameplaySettings = gameplaySettingsField.GetValue(controller);
+                Assert.IsNotNull(gameplaySettings);
+
+                System.Type gameplaySettingsType = gameplaySettings.GetType();
+                gameplaySettingsType.GetField("PlayerCount", BindingFlags.Public | BindingFlags.Instance).SetValue(gameplaySettings, 999);
+                gameplaySettingsType.GetField("MatchDurationSeconds", BindingFlags.Public | BindingFlags.Instance).SetValue(gameplaySettings, 999f);
+                gameplaySettingsType.GetField("TargetActiveEggCount", BindingFlags.Public | BindingFlags.Instance).SetValue(gameplaySettings, 999);
+
+                MethodInfo clampMethod = controllerType.GetMethod("ClampSerializedGameplaySettings", BindingFlags.NonPublic | BindingFlags.Instance);
+                Assert.IsNotNull(clampMethod);
+                clampMethod.Invoke(controller, null);
+
+                int clampedPlayers = (int)gameplaySettingsType.GetField("PlayerCount", BindingFlags.Public | BindingFlags.Instance).GetValue(gameplaySettings);
+                float clampedDuration = (float)gameplaySettingsType.GetField("MatchDurationSeconds", BindingFlags.Public | BindingFlags.Instance).GetValue(gameplaySettings);
+                int clampedEggs = (int)gameplaySettingsType.GetField("TargetActiveEggCount", BindingFlags.Public | BindingFlags.Instance).GetValue(gameplaySettings);
+
+                ArenaDefinition arena = ArenaDefinition.CreateDefault(new GameConfig
+                {
+                    PlayerCount = 999,
+                    TargetActiveEggCount = 999,
+                });
+
+                Assert.AreEqual(arena.MaxSupportedPlayerCount, clampedPlayers);
+                Assert.AreEqual(300f, clampedDuration);
+                Assert.AreEqual(arena.MaxSupportedActiveEggCount, clampedEggs);
+                Assert.Greater(clampedPlayers, 6, "Player count should no longer be clamped to the legacy hard cap of 6.");
+                Assert.Greater(clampedEggs, 8, "Egg count should no longer be clamped to the legacy hard cap of 8.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(gameObject);
+            }
         }
     }
 
