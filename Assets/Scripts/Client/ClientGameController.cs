@@ -213,7 +213,7 @@ namespace EggTest.Client
 
         private void OnMatchStarted(MatchStartedMessage message)
         {
-            GameTrace.Log("Client", "Match started on client with " + message.Players.Count + " player profiles.");
+            GameTrace.Verbose("Client", "Match started on client with " + message.Players.Count + " player profiles.");
             _profiles.Clear();
             _scores.Clear();
             _matchEnded = false;
@@ -266,7 +266,7 @@ namespace EggTest.Client
             }
 
             _scores[message.CollectorId] = message.NewScore;
-            GameTrace.Log("Client", "Updated score for " + message.CollectorId + " to " + message.NewScore + ".");
+            GameTrace.Verbose("Client", "Updated score for " + message.CollectorId + " to " + message.NewScore + ".");
         }
 
         private void OnWorldSnapshot(WorldSnapshotMessage message)

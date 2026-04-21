@@ -149,6 +149,27 @@ How to Run and Verify
    - restart the match
    - exit the game
 
+How to Review and Playtest
+--------------------------
+1. Open `Assets/Scenes/SampleScene.unity` and press **Play**.
+2. Press **Start Game** and verify the short prepare countdown appears before gameplay.
+3. Move the local player with **WASD** or **arrow keys**.
+4. Watch the bots path around blockers, collect eggs, and update the scoreboard.
+5. In the right-side panel, try:
+   - `Players +/-`
+   - `Time +/-`
+   - `Eggs +/-`
+   - network preset buttons
+   - spike toggle
+6. Confirm:
+   - changing Players / Time / Eggs during gameplay restarts immediately without replaying the countdown
+   - pressing **Restart Match** still uses the countdown
+   - the scoreboard updates correctly and can scroll when many players are active
+   - the game-over popup shows the winner and supports restart / exit
+7. Optional networking pass:
+   - compare Stable / Low / Medium / High presets
+   - enable spike mode and observe local prediction plus remote interpolation behavior
+
 Suggested manual verification:
 - start menu appears before gameplay begins
 - Start button transitions into a short countdown and then gameplay HUD

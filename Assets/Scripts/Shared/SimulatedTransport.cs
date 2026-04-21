@@ -61,7 +61,7 @@ namespace EggTest.Shared
             _random = new System.Random(seed);
             CurrentPreset = preset;
             Settings = BuildPreset(preset);
-            GameTrace.Log("Transport", "Initialized simulated transport with preset " + preset + ".");
+            GameTrace.Verbose("Transport", "Initialized simulated transport with preset " + preset + ".");
         }
 
         public void SendToServer(IMessage message, double now)
@@ -102,19 +102,19 @@ namespace EggTest.Shared
             NetworkSimulationSettings next = BuildPreset(preset);
             next.SpikeEnabled = Settings.SpikeEnabled;
             Settings = next;
-            GameTrace.Log("Transport", "Applied network preset " + preset + " (latency=" + Settings.BaseLatencyMs + "ms, jitter=" + Settings.JitterMs + "ms).");
+            GameTrace.Verbose("Transport", "Applied network preset " + preset + " (latency=" + Settings.BaseLatencyMs + "ms, jitter=" + Settings.JitterMs + "ms).");
         }
 
         public void SetSpikeEnabled(bool enabled)
         {
             Settings.SpikeEnabled = enabled;
-            GameTrace.Log("Transport", "Latency spike simulation set to " + enabled + ".");
+            GameTrace.Verbose("Transport", "Latency spike simulation set to " + enabled + ".");
         }
 
         public void Clear()
         {
             _scheduled.Clear();
-            GameTrace.Log("Transport", "Cleared pending transport queues.");
+            GameTrace.Verbose("Transport", "Cleared pending transport queues.");
         }
 
         private void Schedule(IMessage message, double now, bool deliverToServer)

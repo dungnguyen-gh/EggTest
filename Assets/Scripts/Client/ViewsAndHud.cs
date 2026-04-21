@@ -27,7 +27,7 @@ namespace EggTest.Client
         public void Initialize(PlayerProfile profile)
         {
             _profile = profile;
-            GameTrace.Log("View", "Initializing player view for " + profile.DisplayName + ".");
+            GameTrace.Verbose("View", "Initializing player view for " + profile.DisplayName + ".");
 
             _visualRoot = GameObject.CreatePrimitive(PrimitiveType.Capsule).transform;
             _visualRoot.name = "Body";
@@ -190,7 +190,7 @@ namespace EggTest.Client
 
         public void Initialize()
         {
-            GameTrace.Log("View", "Initializing egg view.");
+            GameTrace.Verbose("View", "Initializing egg view.");
             _visual = GameObject.CreatePrimitive(PrimitiveType.Sphere).transform;
             _visual.name = "Visual";
             _visual.SetParent(transform, false);

@@ -72,8 +72,8 @@ namespace EggTest.Server
             _random = new System.Random(config.RandomSeed);
             _useBotSafeRuntimeSpawns = arena.BotSafeSpawnCells.Count >= config.PlayerCount;
             _useBotSafeEggSpawns = arena.BotSafeEggCells.Count > 0;
-            GameTrace.Log("Server", "Server simulator created.");
-            GameTrace.Log(
+            GameTrace.Verbose("Server", "Server simulator created.");
+            GameTrace.Verbose(
                 "Server",
                 "Spawn policy: botSafeRuntimeSpawns=" + _useBotSafeRuntimeSpawns
                 + " botSafeSpawnCount=" + arena.BotSafeSpawnCells.Count
@@ -249,13 +249,13 @@ namespace EggTest.Server
                 bool shouldReconsider = brain.TargetEggId == null || brain.RetargetTimer <= 0f;
                 if (brain.TargetEggId.HasValue && !_eggs.ContainsKey(brain.TargetEggId.Value))
                 {
-                    GameTrace.Log("AI", player.Profile.DisplayName + " lost target " + brain.TargetEggId.Value + " because the egg no longer exists.");
+                    GameTrace.Verbose("AI", player.Profile.DisplayName + " lost target " + brain.TargetEggId.Value + " because the egg no longer exists.");
                     shouldReconsider = true;
                 }
 
                 if (shouldReconsider && brain.ThinkDelay <= 0f)
                 {
-                    GameTrace.Log(
+                    GameTrace.Verbose(
                         "AI",
                         player.Profile.DisplayName + " rebuilding plan. target=" + (brain.TargetEggId.HasValue ? brain.TargetEggId.Value.ToString() : "None")
                         + " retargetTimer=" + brain.RetargetTimer.ToString("F2")
@@ -264,7 +264,7 @@ namespace EggTest.Server
                     RebuildBotPlan(player);
                     brain.RetargetTimer = _config.BotRetargetInterval;
                     brain.ThinkDelay = RandomRange(_config.BotDecisionMinDelay, _config.BotDecisionMaxDelay);
-                    GameTrace.Log(
+                    GameTrace.Verbose(
                         "AI",
                         player.Profile.DisplayName + " finished rebuild. newTarget=" + (brain.TargetEggId.HasValue ? brain.TargetEggId.Value.ToString() : "None")
                         + " pathCells=" + brain.CurrentPath.Count
@@ -297,7 +297,7 @@ namespace EggTest.Server
             if (_eggs.Count == 0)
             {
                 player.MoveDirection = Vector2.zero;
-                GameTrace.Log("AI", player.Profile.DisplayName + " has no egg target because no eggs are active.");
+                GameTrace.Verbose("AI", player.Profile.DisplayName + " has no egg target because no eggs are active.");
                 return;
             }
 
@@ -369,7 +369,7 @@ namespace EggTest.Server
             brain.CurrentPath.Clear();
             brain.CurrentPath.AddRange(_bestPathBuffer);
             brain.NextWaypointIndex = brain.CurrentPath.Count > 1 ? 1 : 0;
-            GameTrace.Log("AI", evaluation + " => selected " + bestEggId.Value + " len=" + _bestPathBuffer.Count + ".");
+            GameTrace.Verbose("AI", evaluation + " => selected " + bestEggId.Value + " len=" + _bestPathBuffer.Count + ".");
         }
 
         private void ApplyBotMoveDirection(ServerPlayerState player)
@@ -400,7 +400,7 @@ namespace EggTest.Server
                 brain.NextWaypointIndex = 0;
                 brain.RetargetTimer = 0f;
                 player.MoveDirection = Vector2.zero;
-                GameTrace.Log("AI", player.Profile.DisplayName + " exhausted its path unexpectedly and will retarget.");
+                GameTrace.Verbose("AI", player.Profile.DisplayName + " exhausted its path unexpectedly and will retarget.");
                 return;
             }
 
@@ -419,7 +419,7 @@ namespace EggTest.Server
                     brain.NextWaypointIndex = 0;
                     brain.RetargetTimer = 0f;
                     player.MoveDirection = Vector2.zero;
-                    GameTrace.Log(
+                    GameTrace.Verbose(
                         "AI",
                         player.Profile.DisplayName + " reached the end of its path for " + completedTarget
                         + ". eggStillExists=" + _eggs.ContainsKey(completedTarget)
@@ -616,7 +616,7 @@ namespace EggTest.Server
                 SentTime = _currentTransportTime,
                 Egg = CloneEgg(egg),
             }, _currentTransportTime);
-            GameTrace.Log("Spawn", "Spawned " + egg.Id + " at cell " + spawnCell + " with palette index " + egg.PaletteIndex + ".");
+            GameTrace.Verbose("Spawn", "Spawned " + egg.Id + " at cell " + spawnCell + " with palette index " + egg.PaletteIndex + ".");
             if (_useBotSafeEggSpawns && !_arena.IsClearForBot(spawnCell))
             {
                 GameTrace.Warn("Spawn", egg.Id + " spawned on a cell that is walkable for players but blocked for bot-clearance routing: " + spawnCell + ".");
@@ -634,7 +634,7 @@ namespace EggTest.Server
             GridCell resolvedCell;
             if (_arena.TryFindNearestBotSafeCell(rawStartCell, out resolvedCell))
             {
-                GameTrace.Log(
+                GameTrace.Verbose(
                     "AI",
                     player.Profile.DisplayName + " remapped start cell from " + rawStartCell + " to nearest bot-safe cell " + resolvedCell + ".");
                 return resolvedCell;
@@ -729,7 +729,7 @@ namespace EggTest.Server
                 {
                     string previousTarget = pair.Value.BotBrain.TargetEggId.HasValue ? pair.Value.BotBrain.TargetEggId.Value.ToString() : "None";
                     pair.Value.BotBrain.RetargetTimer = 0f;
-                    GameTrace.Log(
+                    GameTrace.Verbose(
                         "AI",
                         "Forced retarget for " + pair.Value.Profile.DisplayName
                         + " after " + eggId + " was collected. previousTarget=" + previousTarget
