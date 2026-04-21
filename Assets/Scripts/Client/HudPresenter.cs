@@ -36,10 +36,15 @@ namespace EggTest.Client
         private Text _scoreHeaderRightText;
         private Text _scoreNamesText;
         private Text _scoreValuesText;
+        private RectTransform _scoreContentRect;
+        private ScrollRect _scoreScrollRect;
         private Text _statusText;
         private Text _winnerText;
         private Text _debugText;
         private Text _networkPresetText;
+        private Text _playersValueText;
+        private Text _timeValueText;
+        private Text _eggsValueText;
         private Text _menuTitleText;
         private Text _menuSubtitleText;
         private Text _countdownValueText;
@@ -60,6 +65,8 @@ namespace EggTest.Client
         private Button _playersPlusButton;
         private Button _timeMinusButton;
         private Button _timePlusButton;
+        private Button _eggsMinusButton;
+        private Button _eggsPlusButton;
         private Button _presetStableButton;
         private Button _presetLowButton;
         private Button _presetMediumButton;
@@ -193,6 +200,7 @@ namespace EggTest.Client
             string winners,
             int playerCount,
             int durationSeconds,
+            int eggCount,
             NetworkSimulationSettings networkSettings,
             float snapshotMinInterval,
             float snapshotMaxInterval,
@@ -249,6 +257,23 @@ namespace EggTest.Client
                 _scoreValuesText.text = _debugBuilder.ToString();
             }
 
+            UpdateScoreboardScrollContent(standings.Count);
+
+            if (_playersValueText != null)
+            {
+                _playersValueText.text = "Current: " + playerCount;
+            }
+
+            if (_timeValueText != null)
+            {
+                _timeValueText.text = "Current: " + durationSeconds + "s";
+            }
+
+            if (_eggsValueText != null)
+            {
+                _eggsValueText.text = "Current: " + eggCount;
+            }
+
             _statusText.text = "Status  " + status;
             _winnerText.text = winners;
             if (_gameOverWinnerText != null && _currentScreen == HudScreen.GameOver)
@@ -260,8 +285,6 @@ namespace EggTest.Client
             {
                 _scoreboardBuilder.Length = 0;
                 _scoreboardBuilder
-                    .Append("Players: ").Append(playerCount).Append('\n')
-                    .Append("Duration: ").Append(durationSeconds).Append("s\n")
                     .Append("Latency: ").Append(Mathf.RoundToInt(networkSettings.BaseLatencyMs)).Append(" ms\n")
                     .Append("Jitter: ").Append(Mathf.RoundToInt(networkSettings.JitterMs)).Append(" ms\n")
                     .Append("Spike: ").Append(networkSettings.SpikeEnabled ? "ON" : "OFF").Append('\n')
@@ -303,11 +326,16 @@ namespace EggTest.Client
                 _timerText = FindText("CanvasRoot/LeftPanel/TimerText");
                 _scoreHeaderLeftText = FindText("CanvasRoot/LeftPanel/ScoreHeaderLeftText");
                 _scoreHeaderRightText = FindText("CanvasRoot/LeftPanel/ScoreHeaderRightText");
-                _scoreNamesText = FindText("CanvasRoot/LeftPanel/ScoreNamesText");
-                _scoreValuesText = FindText("CanvasRoot/LeftPanel/ScoreValuesText");
+                _scoreNamesText = FindText("CanvasRoot/LeftPanel/ScoreScrollView/Content/ScoreNamesText");
+                _scoreValuesText = FindText("CanvasRoot/LeftPanel/ScoreScrollView/Content/ScoreValuesText");
+                _scoreContentRect = FindRect("CanvasRoot/LeftPanel/ScoreScrollView/Content");
+                _scoreScrollRect = FindScrollRect("CanvasRoot/LeftPanel/ScoreScrollView");
                 _statusText = FindText("CanvasRoot/LeftPanel/StatusText");
                 _winnerText = FindText("CanvasRoot/LeftPanel/WinnerText");
                 _networkPresetText = FindText("CanvasRoot/RightPanel/PresetText");
+                _playersValueText = FindText("CanvasRoot/RightPanel/PlayersValueText");
+                _timeValueText = FindText("CanvasRoot/RightPanel/TimeValueText");
+                _eggsValueText = FindText("CanvasRoot/RightPanel/EggsValueText");
                 _debugText = FindText("CanvasRoot/RightPanel/DebugText");
                 _menuTitleText = FindText("CanvasRoot/MenuPanel/MenuTitle");
                 _menuSubtitleText = FindText("CanvasRoot/MenuPanel/MenuSubtitle");
@@ -323,6 +351,8 @@ namespace EggTest.Client
                 _playersPlusButton = FindButton("CanvasRoot/RightPanel/PlayersPlus");
                 _timeMinusButton = FindButton("CanvasRoot/RightPanel/TimeMinus");
                 _timePlusButton = FindButton("CanvasRoot/RightPanel/TimePlus");
+                _eggsMinusButton = FindButton("CanvasRoot/RightPanel/EggsMinus");
+                _eggsPlusButton = FindButton("CanvasRoot/RightPanel/EggsPlus");
                 _presetStableButton = FindButton("CanvasRoot/RightPanel/PresetStable");
                 _presetLowButton = FindButton("CanvasRoot/RightPanel/PresetLow");
                 _presetMediumButton = FindButton("CanvasRoot/RightPanel/PresetMedium");
@@ -365,6 +395,8 @@ namespace EggTest.Client
             BindButton(_playersPlusButton, delegate { _controller.ChangePlayerCount(1); });
             BindButton(_timeMinusButton, delegate { _controller.ChangeMatchDuration(-30); });
             BindButton(_timePlusButton, delegate { _controller.ChangeMatchDuration(30); });
+            BindButton(_eggsMinusButton, delegate { _controller.ChangeEggCount(-1); });
+            BindButton(_eggsPlusButton, delegate { _controller.ChangeEggCount(1); });
             BindButton(_presetStableButton, delegate { _controller.SetNetworkPreset(NetworkSimulationPreset.Stable); });
             BindButton(_presetLowButton, delegate { _controller.SetNetworkPreset(NetworkSimulationPreset.Low); });
             BindButton(_presetMediumButton, delegate { _controller.SetNetworkPreset(NetworkSimulationPreset.Medium); });
@@ -435,6 +467,18 @@ namespace EggTest.Client
             return target != null ? target.GetComponent<Button>() : null;
         }
 
+        private RectTransform FindRect(string relativePath)
+        {
+            Transform target = transform.Find(relativePath);
+            return target as RectTransform;
+        }
+
+        private ScrollRect FindScrollRect(string relativePath)
+        {
+            Transform target = transform.Find(relativePath);
+            return target != null ? target.GetComponent<ScrollRect>() : null;
+        }
+
         private GameObject FindObject(string relativePath)
         {
             Transform target = transform.Find(relativePath);
@@ -458,7 +502,7 @@ namespace EggTest.Client
             }
 
             RectTransform leftPanel = EnsurePanel(canvasRect, "LeftPanel", new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(16f, -16f), new Vector2(300f, 400f), PanelColor);
-            RectTransform rightPanel = EnsurePanel(canvasRect, "RightPanel", new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(-16f, -16f), new Vector2(340f, 510f), PanelColor);
+            RectTransform rightPanel = EnsurePanel(canvasRect, "RightPanel", new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(-16f, -16f), new Vector2(340f, 560f), PanelColor);
             RectTransform menuBackdrop = EnsureStretchPanel(canvasRect, "MenuBackdrop", OverlayColor);
             RectTransform menuPanel = EnsurePanel(canvasRect, "MenuPanel", new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(540f, 360f), new Color(0.05f, 0.08f, 0.12f, 0.94f));
             RectTransform countdownBackdrop = EnsureStretchPanel(canvasRect, "CountdownBackdrop", OverlayColor);
@@ -471,8 +515,12 @@ namespace EggTest.Client
             EnsureText(leftPanel, "ScoreTitleText", new Vector2(16f, -96f), new Vector2(260f, 24f), 17, FontStyle.Bold, "Scoreboard", SecondaryTextColor, TextAnchor.UpperLeft);
             EnsureText(leftPanel, "ScoreHeaderLeftText", new Vector2(16f, -126f), new Vector2(176f, 22f), 15, FontStyle.Bold, "Rank  Player", SecondaryTextColor, TextAnchor.UpperLeft);
             EnsureText(leftPanel, "ScoreHeaderRightText", new Vector2(198f, -126f), new Vector2(86f, 22f), 15, FontStyle.Bold, "Score", SecondaryTextColor, TextAnchor.UpperRight);
-            EnsureText(leftPanel, "ScoreNamesText", new Vector2(16f, -152f), new Vector2(182f, 152f), 18, FontStyle.Normal, string.Empty, Color.white, TextAnchor.UpperLeft);
-            EnsureText(leftPanel, "ScoreValuesText", new Vector2(198f, -152f), new Vector2(86f, 152f), 18, FontStyle.Normal, string.Empty, Color.white, TextAnchor.UpperRight);
+            RectTransform scoreScrollView = EnsureScrollView(leftPanel, "ScoreScrollView", new Vector2(16f, -152f), new Vector2(268f, 152f));
+            RectTransform scoreContent = EnsureScrollContent(scoreScrollView, "Content");
+            MoveUiChildIfPresent(leftPanel, "ScoreNamesText", scoreContent);
+            MoveUiChildIfPresent(leftPanel, "ScoreValuesText", scoreContent);
+            EnsureText(scoreContent, "ScoreNamesText", Vector2.zero, new Vector2(182f, 152f), 18, FontStyle.Normal, string.Empty, Color.white, TextAnchor.UpperLeft);
+            EnsureText(scoreContent, "ScoreValuesText", new Vector2(182f, 0f), new Vector2(86f, 152f), 18, FontStyle.Normal, string.Empty, Color.white, TextAnchor.UpperRight);
             EnsureText(leftPanel, "StatusText", new Vector2(16f, -314f), new Vector2(268f, 34f), 15, FontStyle.Normal, string.Empty, SecondaryTextColor, TextAnchor.UpperLeft);
             EnsureText(leftPanel, "WinnerText", new Vector2(16f, -350f), new Vector2(268f, 40f), 20, FontStyle.Bold, string.Empty, SuccessColor, TextAnchor.UpperLeft);
 
@@ -481,15 +529,20 @@ namespace EggTest.Client
             EnsureText(rightPanel, "DebugText", new Vector2(16f, -78f), new Vector2(308f, 150f), 16, FontStyle.Normal, "Waiting for Play mode...", DebugTextColor, TextAnchor.UpperLeft);
             EnsureButton(rightPanel, "PlayersMinus", new Vector2(16f, -240f), new Vector2(86f, 34f), "Players -", NeutralButtonColor);
             EnsureButton(rightPanel, "PlayersPlus", new Vector2(108f, -240f), new Vector2(86f, 34f), "Players +", NeutralButtonColor);
+            EnsureText(rightPanel, "PlayersValueText", new Vector2(204f, -245f), new Vector2(116f, 24f), 15, FontStyle.Bold, "Current: 4", SecondaryTextColor, TextAnchor.UpperLeft);
             EnsureButton(rightPanel, "TimeMinus", new Vector2(16f, -284f), new Vector2(86f, 34f), "Time -", NeutralButtonColor);
             EnsureButton(rightPanel, "TimePlus", new Vector2(108f, -284f), new Vector2(86f, 34f), "Time +", NeutralButtonColor);
-            EnsureButton(rightPanel, "PresetStable", new Vector2(16f, -336f), new Vector2(72f, 34f), "Stable", NeutralButtonColor);
-            EnsureButton(rightPanel, "PresetLow", new Vector2(94f, -336f), new Vector2(62f, 34f), "Low", NeutralButtonColor);
-            EnsureButton(rightPanel, "PresetMedium", new Vector2(162f, -336f), new Vector2(82f, 34f), "Medium", NeutralButtonColor);
-            EnsureButton(rightPanel, "PresetHigh", new Vector2(250f, -336f), new Vector2(62f, 34f), "High", NeutralButtonColor);
-            EnsureButton(rightPanel, "SpikeToggle", new Vector2(16f, -386f), new Vector2(136f, 38f), "Toggle Spike", NeutralButtonColor);
-            EnsureButton(rightPanel, "Restart", new Vector2(16f, -438f), new Vector2(136f, 38f), "Restart Match", PrimaryButtonColor);
-            EnsureButton(rightPanel, "Exit", new Vector2(164f, -438f), new Vector2(136f, 38f), "Exit", DangerButtonColor);
+            EnsureText(rightPanel, "TimeValueText", new Vector2(204f, -289f), new Vector2(116f, 24f), 15, FontStyle.Bold, "Current: 90s", SecondaryTextColor, TextAnchor.UpperLeft);
+            EnsureButton(rightPanel, "EggsMinus", new Vector2(16f, -328f), new Vector2(86f, 34f), "Eggs -", NeutralButtonColor);
+            EnsureButton(rightPanel, "EggsPlus", new Vector2(108f, -328f), new Vector2(86f, 34f), "Eggs +", NeutralButtonColor);
+            EnsureText(rightPanel, "EggsValueText", new Vector2(204f, -333f), new Vector2(116f, 24f), 15, FontStyle.Bold, "Current: 3", SecondaryTextColor, TextAnchor.UpperLeft);
+            EnsureButton(rightPanel, "PresetStable", new Vector2(16f, -380f), new Vector2(72f, 34f), "Stable", NeutralButtonColor);
+            EnsureButton(rightPanel, "PresetLow", new Vector2(94f, -380f), new Vector2(62f, 34f), "Low", NeutralButtonColor);
+            EnsureButton(rightPanel, "PresetMedium", new Vector2(162f, -380f), new Vector2(82f, 34f), "Medium", NeutralButtonColor);
+            EnsureButton(rightPanel, "PresetHigh", new Vector2(250f, -380f), new Vector2(62f, 34f), "High", NeutralButtonColor);
+            EnsureButton(rightPanel, "SpikeToggle", new Vector2(16f, -430f), new Vector2(136f, 38f), "Toggle Spike", NeutralButtonColor);
+            EnsureButton(rightPanel, "Restart", new Vector2(16f, -482f), new Vector2(136f, 38f), "Restart Match", PrimaryButtonColor);
+            EnsureButton(rightPanel, "Exit", new Vector2(164f, -482f), new Vector2(136f, 38f), "Exit", DangerButtonColor);
 
             EnsureText(menuPanel, "MenuTitle", new Vector2(24f, -28f), new Vector2(492f, 60f), 42, FontStyle.Bold, "Egg Test", Color.white, TextAnchor.UpperCenter);
             EnsureText(menuPanel, "MenuSubtitle", new Vector2(32f, -104f), new Vector2(476f, 96f), 18, FontStyle.Normal, "Collect eggs before the timer ends.\nOutscore the bots and test the network presets.", SecondaryTextColor, TextAnchor.UpperCenter);
@@ -587,6 +640,61 @@ namespace EggTest.Client
             return rect;
         }
 
+        private static RectTransform EnsureScrollView(Transform parent, string name, Vector2 anchoredPosition, Vector2 size)
+        {
+            GameObject scrollObject = GetOrCreateUiObject(parent, name);
+            Image image = scrollObject.GetComponent<Image>();
+            if (image == null)
+            {
+                image = scrollObject.AddComponent<Image>();
+            }
+            image.color = new Color(1f, 1f, 1f, 0.02f);
+
+            if (scrollObject.GetComponent<RectMask2D>() == null)
+            {
+                scrollObject.AddComponent<RectMask2D>();
+            }
+
+            ScrollRect scrollRect = scrollObject.GetComponent<ScrollRect>();
+            if (scrollRect == null)
+            {
+                scrollRect = scrollObject.AddComponent<ScrollRect>();
+            }
+
+            RectTransform rect = scrollObject.GetComponent<RectTransform>();
+            rect.anchorMin = new Vector2(0f, 1f);
+            rect.anchorMax = new Vector2(0f, 1f);
+            rect.pivot = new Vector2(0f, 1f);
+            rect.anchoredPosition = anchoredPosition;
+            rect.sizeDelta = size;
+
+            scrollRect.horizontal = false;
+            scrollRect.vertical = true;
+            scrollRect.movementType = ScrollRect.MovementType.Clamped;
+            scrollRect.viewport = rect;
+            scrollRect.scrollSensitivity = 24f;
+            return rect;
+        }
+
+        private static RectTransform EnsureScrollContent(RectTransform scrollView, string name)
+        {
+            GameObject contentObject = GetOrCreateUiObject(scrollView, name);
+            RectTransform rect = contentObject.GetComponent<RectTransform>();
+            rect.anchorMin = new Vector2(0f, 1f);
+            rect.anchorMax = new Vector2(0f, 1f);
+            rect.pivot = new Vector2(0f, 1f);
+            rect.anchoredPosition = Vector2.zero;
+            rect.sizeDelta = new Vector2(scrollView.rect.width, scrollView.rect.height);
+
+            ScrollRect scrollRect = scrollView.GetComponent<ScrollRect>();
+            if (scrollRect != null)
+            {
+                scrollRect.content = rect;
+            }
+
+            return rect;
+        }
+
         private static RectTransform EnsureStretchPanel(Transform parent, string name, Color color)
         {
             GameObject panelObject = GetOrCreateUiObject(parent, name);
@@ -663,6 +771,54 @@ namespace EggTest.Client
             rect.anchoredPosition = anchoredPosition;
             rect.sizeDelta = size;
             return text;
+        }
+
+        private void UpdateScoreboardScrollContent(int standingsCount)
+        {
+            if (_scoreContentRect == null || _scoreScrollRect == null || _scoreNamesText == null || _scoreValuesText == null)
+            {
+                return;
+            }
+
+            const float rowHeight = 24f;
+            const float padding = 8f;
+            float viewportHeight = _scoreScrollRect.viewport != null ? _scoreScrollRect.viewport.rect.height : 152f;
+            float contentHeight = Mathf.Max(viewportHeight, (standingsCount * rowHeight) + padding);
+            _scoreContentRect.sizeDelta = new Vector2(268f, contentHeight);
+
+            RectTransform namesRect = _scoreNamesText.rectTransform;
+            if (namesRect != null)
+            {
+                namesRect.anchorMin = new Vector2(0f, 1f);
+                namesRect.anchorMax = new Vector2(0f, 1f);
+                namesRect.pivot = new Vector2(0f, 1f);
+                namesRect.anchoredPosition = Vector2.zero;
+                namesRect.sizeDelta = new Vector2(182f, contentHeight);
+            }
+
+            RectTransform valuesRect = _scoreValuesText.rectTransform;
+            if (valuesRect != null)
+            {
+                valuesRect.anchorMin = new Vector2(0f, 1f);
+                valuesRect.anchorMax = new Vector2(0f, 1f);
+                valuesRect.pivot = new Vector2(0f, 1f);
+                valuesRect.anchoredPosition = new Vector2(182f, 0f);
+                valuesRect.sizeDelta = new Vector2(86f, contentHeight);
+            }
+        }
+
+        private static void MoveUiChildIfPresent(Transform oldParent, string childName, Transform newParent)
+        {
+            if (oldParent == null || newParent == null)
+            {
+                return;
+            }
+
+            Transform existing = oldParent.Find(childName);
+            if (existing != null)
+            {
+                existing.SetParent(newParent, false);
+            }
         }
 
         private static Button EnsureButton(Transform parent, string name, Vector2 anchoredPosition, Vector2 size, string label, Color fillColor)
