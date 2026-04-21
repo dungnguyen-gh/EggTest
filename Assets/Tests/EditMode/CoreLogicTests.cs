@@ -212,7 +212,46 @@ namespace EggTest.Tests.EditMode
                 Assert.AreEqual(300f, clampedDuration);
                 Assert.AreEqual(arena.MaxSupportedActiveEggCount, clampedEggs);
                 Assert.Greater(clampedPlayers, 6, "Player count should no longer be clamped to the legacy hard cap of 6.");
-                Assert.Greater(clampedEggs, 8, "Egg count should no longer be clamped to the legacy hard cap of 8.");
+            }
+            finally
+            {
+                Object.DestroyImmediate(gameObject);
+            }
+        }
+
+        [Test]
+        public void ClampSerializedGameplaySettings_AllowsEggCountAboveLegacyHardCap_WhenArenaSupportsIt()
+        {
+            GameObject gameObject = new GameObject("GameSceneControllerEggConfigTest");
+            try
+            {
+                GameSceneController controller = gameObject.AddComponent<GameSceneController>();
+                System.Type controllerType = typeof(GameSceneController);
+                FieldInfo gameplaySettingsField = controllerType.GetField("_gameplaySettings", BindingFlags.NonPublic | BindingFlags.Instance);
+                Assert.IsNotNull(gameplaySettingsField);
+
+                object gameplaySettings = gameplaySettingsField.GetValue(controller);
+                Assert.IsNotNull(gameplaySettings);
+
+                System.Type gameplaySettingsType = gameplaySettings.GetType();
+                gameplaySettingsType.GetField("PlayerCount", BindingFlags.Public | BindingFlags.Instance).SetValue(gameplaySettings, 4);
+                gameplaySettingsType.GetField("MatchDurationSeconds", BindingFlags.Public | BindingFlags.Instance).SetValue(gameplaySettings, 90f);
+                gameplaySettingsType.GetField("TargetActiveEggCount", BindingFlags.Public | BindingFlags.Instance).SetValue(gameplaySettings, 999);
+
+                MethodInfo clampMethod = controllerType.GetMethod("ClampSerializedGameplaySettings", BindingFlags.NonPublic | BindingFlags.Instance);
+                Assert.IsNotNull(clampMethod);
+                clampMethod.Invoke(controller, null);
+
+                int clampedEggs = (int)gameplaySettingsType.GetField("TargetActiveEggCount", BindingFlags.Public | BindingFlags.Instance).GetValue(gameplaySettings);
+
+                ArenaDefinition arena = ArenaDefinition.CreateDefault(new GameConfig
+                {
+                    PlayerCount = 4,
+                    TargetActiveEggCount = 999,
+                });
+
+                Assert.AreEqual(arena.MaxSupportedActiveEggCount, clampedEggs);
+                Assert.Greater(clampedEggs, 8, "Egg count should no longer be clamped to the legacy hard cap of 8 when the arena supports more.");
             }
             finally
             {
